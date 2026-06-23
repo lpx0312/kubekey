@@ -1,0 +1,22 @@
+---
+- name: Package | Reset artifact directory
+  command: |
+    rm -rf {{ .artifact_dir }} && mkdir -p {{ .artifact_dir }}
+
+- name: Package | Copy required binaries and images
+  block:
+    # Download core binaries
+    - include_tasks: binary.yaml
+    # Download Helm and CNI binaries
+    - include_tasks: helm.yaml
+    # Download remote images to the local images directory
+    - include_tasks: images.yaml
+    # Download iso file
+    - include_tasks: iso.yaml
+    # Download tools file
+    - include_tasks: tools.yaml
+
+- name: Package | Export artifact
+  command: |
+    # package binary directory
+    cd {{ .artifact_dir }}/kubekey && tar -czvf {{ .artifact_dir }}/kubekey-artifact.tgz . && rm -rf {{ .artifact_dir }}/kubekey

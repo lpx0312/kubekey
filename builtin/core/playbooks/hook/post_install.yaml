@@ -1,0 +1,42 @@
+---
+- name: Post | Apply Security Enhancements
+  hosts:
+    - all
+  roles:
+    - role: security
+      when: .security_enhancement
+
+- name: Post | Run Post-Installation Scripts
+  hosts:
+    - all
+  tasks:
+    - name: Post | Copy post-installation scripts to remote hosts
+      when: (print "%s/scripts/post_install_%s.sh" .scripts_dir .inventory_hostname) | fileExists
+      copy:
+        src: >-
+          {{ .scripts_dir }}/post_install_{{ .inventory_hostname }}.sh
+        dest: >-
+          /etc/kubekey/scripts/post_install_{{ .inventory_hostname }}.sh
+        mode: 0755
+
+    - name: Post | Copy post-installation config scripts to remote hosts
+      copy:
+        src: >-
+          {{ .scripts_dir }}/{{ .item.script }}
+        dest: >-
+          /etc/kubekey/scripts/post_install_{{ .item.script }}
+        mode: 0755
+      loop: "{{ .post_install | toJson }}"
+      when:
+        - (getStringSlice .groups .item.group) | default list | has .inventory_hostname
+        - (print "%s/%s" .scripts_dir .item.script) | fileExists
+
+    - name: Post | Execute post-installation scripts on remote hosts
+      command: |
+        for file in /etc/kubekey/scripts/post_install_*.sh; do
+          if [ -f "$file" ]; then
+            # Make the script executable and run it
+            chmod +x "$file"
+            "$file"
+          fi
+        done
