@@ -28,7 +28,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/asaskevich/govalidator"
 	"github.com/cockroachdb/errors"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -559,7 +558,8 @@ func computeDigest(content []byte) string {
 
 // normalizeImageName adds the default registry (docker.io) to image names that don't include a registry.
 // Examples: "ubuntu" -> "docker.io/library/ubuntu", "project/xx" -> "docker.io/project/xx"
-// Images that already include a registry (e.g., "registry.example.com/image") are returned unchanged.
+// Images that already include a registry (e.g., "registry.example.com/image",
+// "registry.example.com:5000/image") are returned unchanged.
 func normalizeImageName(image string) string {
 	parts := strings.Split(image, "/")
 
@@ -569,10 +569,12 @@ func normalizeImageName(image string) string {
 		return fmt.Sprintf("%s/library/%s", defaultRegistry, image)
 	default:
 		// Two parts (e.g., "project/xx" or "registry.example.com/project")
-		// Check if first part is a registry host
+		// Check if first part is a registry host: a host is recognized if it
+		// contains '.' (domain), ':' (host:port, e.g. registry:5000), or is localhost.
+		// This matches oras registry.ParseReference behavior, which also accepts host:port.
 		firstPart := parts[0]
-		if govalidator.IsHost(firstPart) {
-			// registry/project format: keep as is
+		if strings.ContainsAny(firstPart, ".:") || firstPart == "localhost" {
+			// registry/project format: keep as is (includes registry:port/project)
 			return image
 		}
 		// project/xx format: add default registry
