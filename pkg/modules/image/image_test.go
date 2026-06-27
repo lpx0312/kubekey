@@ -181,9 +181,9 @@ func TestNormalizeImageName(t *testing.T) {
 			expected: "docker.io/library/nginx:latest",
 		},
 		{
-			name:     "image with project - not recognized as host",
+			name:     "image with project - docker hub user repo",
 			input:    "project/xx",
-			expected: "project/xx",
+			expected: "docker.io/project/xx",
 		},
 		{
 			name:     "image with registry hostname",
@@ -191,9 +191,14 @@ func TestNormalizeImageName(t *testing.T) {
 			expected: "registry.example.com/image",
 		},
 		{
-			name:     "image with registry hostname and port - treated as project",
+			name:     "image with registry hostname and port",
 			input:    "registry.example.com:5000/image",
-			expected: "docker.io/registry.example.com:5000/image",
+			expected: "registry.example.com:5000/image",
+		},
+		{
+			name:     "image with registry hostname and port and multi-level path",
+			input:    "harbor.sktill.top:7000/kubesphere/ks-apiserver:v4.1.3",
+			expected: "harbor.sktill.top:7000/kubesphere/ks-apiserver:v4.1.3",
 		},
 		{
 			name:     "image with registry and project",
