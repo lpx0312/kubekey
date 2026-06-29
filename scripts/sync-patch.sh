@@ -163,17 +163,19 @@ git log --oneline -3
 echo ""
 
 # ---------- 7. 推送 tag 到 fork ----------
+# 用 --force 推送, 使脚本幂等: 同一版本可重复运行, 总是覆盖为最新结果。
+# (远程可能已存在同名 tag, 例如之前跑过一次, 此时普通 push 会被拒绝)
 if [[ "$PUSH" == "yes" ]]; then
-  info "推送 tag $RELEASE_TAG 到 $ORIGIN_REMOTE..."
-  if git push "$ORIGIN_REMOTE" "refs/tags/$RELEASE_TAG"; then
+  info "推送 tag $RELEASE_TAG 到 $ORIGIN_REMOTE (允许覆盖已存在的同名 tag)..."
+  if git push "$ORIGIN_REMOTE" "refs/tags/$RELEASE_TAG" --force; then
     ok "推送成功: $ORIGIN_REMOTE 上的 $RELEASE_TAG = 官方 $VERSION + patch"
   else
     die "推送失败 (可能是网络问题)。可稍后手动重试:
-         git push $ORIGIN_REMOTE refs/tags/$RELEASE_TAG"
+         git push $ORIGIN_REMOTE refs/tags/$RELEASE_TAG --force"
   fi
 else
   info "已指定 --no-push, 跳过推送。需要时手动执行:"
-  echo "    git push $ORIGIN_REMOTE refs/tags/$RELEASE_TAG"
+  echo "    git push $ORIGIN_REMOTE refs/tags/$RELEASE_TAG --force"
 fi
 
 # ---------- 8. 切回原状态 ----------
