@@ -1,0 +1,101 @@
+From ca702f21c8bfd18e1cadfb7992fe81a26b2389a8 Mon Sep 17 00:00:00 2001
+From: lpx <lpx_0312@163.com>
+Date: Sat, 27 Jun 2026 16:54:21 +0800
+Subject: [PATCH] fix(image): support registry addresses with a port
+
+normalizeImageName used govalidator.IsHost() to decide whether the
+first path segment is a registry host. IsHost() rejects any string
+containing ':' (a port), so "registry:5000/image" was misclassified
+as a project name and rewritten to
+"docker.io/registry:5000/image", which then failed to parse with
+"invalid tag" (the host:port colon was taken as the tag separator).
+
+Replace the host check with the same rule oras
+registry.ParseReference uses: a first segment containing '.' or ':'
+(or equal to "localhost") is treated as a registry host and left
+unchanged. This also corrects the previously buggy expectation that
+"project/xx" is kept as-is; it is now normalized to
+"docker.io/project/xx", matching the Docker distribution spec (a
+bare "project" is a Docker Hub user/org, not a host).
+
+The govalidator import is removed from image.go as it is no longer
+used.
+---
+ pkg/modules/image/image.go      | 12 +++++++-----
+ pkg/modules/image/image_test.go | 13 +++++++++----
+ 2 files changed, 16 insertions(+), 9 deletions(-)
+
+diff --git a/pkg/modules/image/image.go b/pkg/modules/image/image.go
+index 7ca655d..3b7d7ed 100644
+--- a/pkg/modules/image/image.go
++++ b/pkg/modules/image/image.go
+@@ -28,7 +28,6 @@ import (
+ 	"slices"
+ 	"strings"
+ 
+-	"github.com/asaskevich/govalidator"
+ 	"github.com/cockroachdb/errors"
+ 	"github.com/opencontainers/go-digest"
+ 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+@@ -559,7 +558,8 @@ func computeDigest(content []byte) string {
+ 
+ // normalizeImageName adds the default registry (docker.io) to image names that don't include a registry.
+ // Examples: "ubuntu" -> "docker.io/library/ubuntu", "project/xx" -> "docker.io/project/xx"
+-// Images that already include a registry (e.g., "registry.example.com/image") are returned unchanged.
++// Images that already include a registry (e.g., "registry.example.com/image",
++// "registry.example.com:5000/image") are returned unchanged.
+ func normalizeImageName(image string) string {
+ 	parts := strings.Split(image, "/")
+ 
+@@ -569,10 +569,12 @@ func normalizeImageName(image string) string {
+ 		return fmt.Sprintf("%s/library/%s", defaultRegistry, image)
+ 	default:
+ 		// Two parts (e.g., "project/xx" or "registry.example.com/project")
+-		// Check if first part is a registry host
++		// Check if first part is a registry host: a host is recognized if it
++		// contains '.' (domain), ':' (host:port, e.g. registry:5000), or is localhost.
++		// This matches oras registry.ParseReference behavior, which also accepts host:port.
+ 		firstPart := parts[0]
+-		if govalidator.IsHost(firstPart) {
+-			// registry/project format: keep as is
++		if strings.ContainsAny(firstPart, ".:") || firstPart == "localhost" {
++			// registry/project format: keep as is (includes registry:port/project)
+ 			return image
+ 		}
+ 		// project/xx format: add default registry
+diff --git a/pkg/modules/image/image_test.go b/pkg/modules/image/image_test.go
+index 85b51fc..c8ec03b 100644
+--- a/pkg/modules/image/image_test.go
++++ b/pkg/modules/image/image_test.go
+@@ -181,9 +181,9 @@ func TestNormalizeImageName(t *testing.T) {
+ 			expected: "docker.io/library/nginx:latest",
+ 		},
+ 		{
+-			name:     "image with project - not recognized as host",
++			name:     "image with project - docker hub user repo",
+ 			input:    "project/xx",
+-			expected: "project/xx",
++			expected: "docker.io/project/xx",
+ 		},
+ 		{
+ 			name:     "image with registry hostname",
+@@ -191,9 +191,14 @@ func TestNormalizeImageName(t *testing.T) {
+ 			expected: "registry.example.com/image",
+ 		},
+ 		{
+-			name:     "image with registry hostname and port - treated as project",
++			name:     "image with registry hostname and port",
+ 			input:    "registry.example.com:5000/image",
+-			expected: "docker.io/registry.example.com:5000/image",
++			expected: "registry.example.com:5000/image",
++		},
++		{
++			name:     "image with registry hostname and port and multi-level path",
++			input:    "harbor.sktill.top:7000/kubesphere/ks-apiserver:v4.1.3",
++			expected: "harbor.sktill.top:7000/kubesphere/ks-apiserver:v4.1.3",
+ 		},
+ 		{
+ 			name:     "image with registry and project",
+-- 
+2.43.0.windows.1
+
