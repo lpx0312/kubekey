@@ -12,6 +12,7 @@
 # 示例:
 #   ./scripts/sync-patch.sh v4.0.6
 #   ./scripts/sync-patch.sh v4.0.6 --no-push
+#   SYNC_PROXY=http://127.0.0.1:7897 ./scripts/sync-patch.sh v4.0.6   # 本地走代理
 #
 # 前提: 已配置 upstream remote (见 PATCH-MAINTENANCE.md)
 #
@@ -22,7 +23,10 @@ UPSTREAM_REMOTE="upstream"
 ORIGIN_REMOTE="origin"
 PATCH_TAG="patch/port-fix"          # 你的私有 patch 的稳定引用 tag
 PATCH_SUFFIX="-portfix"             # fork 上发布 tag 的后缀 (避开与官方同名 tag 冲突)
-PROXY="http://127.0.0.1:7897"       # 网络代理 (留空则不用代理)
+# 网络代理: 默认不使用。本地网络受限时通过环境变量开启, 例:
+#   SYNC_PROXY=http://127.0.0.1:7897 ./scripts/sync-patch.sh v4.0.6
+# GitHub Actions runner 在境外, 直连 GitHub 无需代理。
+PROXY="${SYNC_PROXY:-}"
 # --------------------------
 
 # 颜色输出
