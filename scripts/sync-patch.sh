@@ -85,6 +85,16 @@ info "从 $UPSTREAM_REMOTE 拉取最新 tag..."
 git fetch "$UPSTREAM_REMOTE" --tags
 ok "fetch 完成"
 
+# fetch --tags 可能拉回与本地分支同名的官方 tag (如 v4.0.5),
+# 造成后续 'matches more than one' / push 歧义。这里清理掉所有这类冲突 tag。
+# (仅清理与本地分支同名的 tag; 官方 tag 信息仍保留在 upstream remote ref 里)
+if [[ -n "$ORIG_BRANCH" ]]; then
+  if git rev-parse "refs/tags/$ORIG_BRANCH" >/dev/null 2>&1; then
+    warn "fetch 拉回了与当前分支同名的 tag '$ORIG_BRANCH', 删除以避免歧义"
+    git tag -d "$ORIG_BRANCH"
+  fi
+fi
+
 # 确认官方存在该 tag
 git rev-parse "refs/remotes/$UPSTREAM_REMOTE/tags/$VERSION" >/dev/null 2>&1 \
   || git rev-parse "refs/tags/$VERSION" >/dev/null 2>&1 \
