@@ -1,0 +1,67 @@
+# 把私有 patch 打到官方新版本上, 以 -portfix tag 形式发布到 fork。
+#
+# 触发方式: 手动 (workflow_dispatch), 在 Actions 页面输入官方版本号 (如 v4.0.6)。
+# 工作内容: 检出官方 tag → cherry-pick patch/port-fix → 打 vX.Y.Z-portfix tag → 推送。
+#
+# 这个 workflow 必须存在于 port-fix 分支 (它引用的 patch/port-fix tag 在该分支上)。
+
+name: Sync Patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "官方版本号 (如 v4.0.6)"
+        required: true
+        type: string
+      push:
+        description: "完成后推送 tag 到 fork"
+        required: false
+        default: true
+        type: boolean
+
+# 推送 tag 需要写权限
+permissions:
+  contents: write
+
+jobs:
+  sync-patch:
+    name: "Sync patch → ${{ inputs.version }}"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork (full history + tags)
+        uses: actions/checkout@v4
+        with:
+          # 必须拉全历史, 否则 cherry-pick patch/port-fix (annotated tag) 找不到其 commit
+          fetch-depth: 0
+          # 拉 tags, 确保 patch/port-fix 可用
+          fetch-tags: true
+          ref: port-fix
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/kubesphere/kubekey.git
+          git remote -v
+
+      - name: Run sync-patch.sh
+        env:
+          # 用 GITHUB_TOKEN 推送到本 fork
+          SYNC_PROXY: ""
+        run: |
+          ARGS="${{ inputs.version }}"
+          if [ "${{ inputs.push }}" != "true" ]; then
+            ARGS="$ARGS --no-push"
+          fi
+          ./scripts/sync-patch.sh $ARGS
