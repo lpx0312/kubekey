@@ -25,8 +25,6 @@ on:
 
 permissions:
   contents: write
-  # 推送官方 tag 历史时, 可能携带 .github/workflows/ 文件变更, 需要 workflows 写权限
-  workflows: write
 
 jobs:
   # ─────────────────────────────────────────────────────────────
@@ -41,6 +39,12 @@ jobs:
       - name: Checkout fork (full history + tags)
         uses: actions/checkout@v4
         with:
+          # 用 PAT (需 workflows scope) 而非默认 GITHUB_TOKEN,
+          # 否则 push 含 workflow 文件历史的 tag 时会被 GitHub 拦截:
+          #   "refusing to allow a GitHub App to create or update workflow
+          #    without workflows permission"
+          # KK_PAT 是仓库 Secret, 见 README / PATCH-MAINTENANCE.md 说明。
+          token: ${{ secrets.KK_PAT }}
           fetch-depth: 0
           fetch-tags: true
           ref: port-fix
@@ -91,6 +95,8 @@ jobs:
       - name: Checkout at the new -portfix tag
         uses: actions/checkout@v4
         with:
+          # 用 PAT, 与 sync job 一致; GoReleaser 创建 Release 也用这个 token
+          token: ${{ secrets.KK_PAT }}
           fetch-depth: 0
           fetch-tags: true
           ref: ${{ env.RELEASE_TAG }}
@@ -112,7 +118,7 @@ jobs:
       # 让 GoReleaser 能重新创建。tag 本身由 sync job 已用 --force 更新。
       - name: Remove existing release (for idempotent re-runs)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.KK_PAT }}
         run: |
           if gh release view "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG 已存在, 删除后由 GoReleaser 重建"
@@ -129,7 +135,7 @@ jobs:
           version: v2.5.1
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.KK_PAT }}
           LDFLAGS: ${{ steps.prepare.outputs.ldflags }}
 
       - name: Release info
