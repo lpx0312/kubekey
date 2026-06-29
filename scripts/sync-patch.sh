@@ -55,7 +55,8 @@ git rev-parse "$PATCH_TAG" >/dev/null 2>&1 || \
   die "未找到 patch tag '$PATCH_TAG'。这是你的私有修复引用, 不能缺失。"
 
 # 保存当前状态, 完成后切回 (必须在任何 checkout 之前抓取)
-# 注意: 某些 git 客户端 (如 MSYS) 的 symbolic-ref/abbrev-ref 会返回 "heads/v4.0.5"
+# 建议在 port-fix 分支上运行本脚本 (该分支 = 官方基线 + 私有 patch + 本脚本/文档)。
+# 注意: 某些 git 客户端 (如 MSYS) 的 symbolic-ref/abbrev-ref 会返回 "heads/<branch>"
 # 带前缀的形式, checkout 这种带前缀的名字会进入 detached HEAD, 所以要剥离前缀。
 ORIG_BRANCH=""
 if git symbolic-ref -q HEAD >/dev/null 2>&1; then

@@ -9,7 +9,14 @@
 origin     → git@github.com:lpx0312/kubekey.git     你的 fork (push 目标)
 upstream   → https://github.com/kubesphere/kubekey   官方 (只读, 拉新版本)
 
-tag: patch/port-fix → 端口修复 commit (跨版本稳定引用)
+分支:
+  port-fix   ← 长期维护分支 = 官方 v4.0.5 基线 + 私有 patch + 本脚本/文档
+                (日常就在这个分支上工作, 官方发新版后用脚本生成 vX.Y.Z-portfix tag)
+  master     ← 官方 v4.0.5 原始内容 (备份, 不动)
+
+tag:
+  patch/port-fix  → 端口修复 commit (跨版本稳定引用, cherry-pick 时用)
+  v4.0.6-portfix  → 发布产物 = 官方 v4.0.6 + 你的 patch (脚本生成)
 ```
 
 ## 发布 tag 命名规则
@@ -32,6 +39,12 @@ tag: patch/port-fix → 端口修复 commit (跨版本稳定引用)
 
 > 假设官方刚发布了 `v4.0.6`，要把它带上你的 patch。
 
+**先确保在 `port-fix` 分支上**（这是日常维护分支）：
+```bash
+git checkout port-fix
+```
+
+然后一条命令同步：
 ```bash
 ./scripts/sync-patch.sh v4.0.6
 ```
@@ -43,7 +56,7 @@ tag: patch/port-fix → 端口修复 commit (跨版本稳定引用)
 4. 运行 image 模块测试验证
 5. 打发布 tag `v4.0.6-portfix`（官方原版 `v4.0.6` 不动）
 6. 推送 `v4.0.6-portfix` 到 fork
-7. 切回原分支
+7. 切回 `port-fix` 分支
 
 完成后，你的 fork 上就有了 `v4.0.6-portfix` tag = 官方 v4.0.6 + 你的端口修复。
 
@@ -53,10 +66,18 @@ tag: patch/port-fix → 端口修复 commit (跨版本稳定引用)
 
 ## 编译 Linux 二进制（带 builtin tag）
 
+**方式一：直接在 port-fix 分支编译**（port-fix 分支本身已含 patch，当前基线是 v4.0.5）：
 ```bash
-# 检出你发布的补丁版 tag
-git checkout v4.0.6-portfix
+git checkout port-fix
+```
 
+**方式二：检出某个发布的补丁版 tag 编译**（如官方已发布更高版本并用脚本生成了）：
+```bash
+git checkout v4.0.6-portfix
+```
+
+然后编译：
+```bash
 LDFLAGS=$(bash hack/version.sh)
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -trimpath -tags "builtin" -ldflags "$LDFLAGS" \
