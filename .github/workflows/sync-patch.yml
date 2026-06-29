@@ -1,7 +1,10 @@
-# 把私有 patch 打到官方新版本上, 以 -portfix tag 形式发布到 fork。
+# 把私有 patch 打到官方新版本上, 编译二进制并发布到 GitHub Release。
 #
 # 触发方式: 手动 (workflow_dispatch), 在 Actions 页面输入官方版本号 (如 v4.0.6)。
-# 工作内容: 检出官方 tag → cherry-pick patch/port-fix → 打 vX.Y.Z-portfix tag → 推送。
+#
+# 完整流程 (一条流水线):
+#   1. sync: 检出官方 tag → cherry-pick patch/port-fix → 打 vX.Y.Z-portfix tag → 推送
+#   2. release: 基于该 tag checkout → GoReleaser 编译 6 个二进制 → 创建 GitHub Release
 #
 # 这个 workflow 必须存在于 port-fix 分支 (它引用的 patch/port-fix tag 在该分支上)。
 
@@ -15,27 +18,28 @@ on:
         required: true
         type: string
       push:
-        description: "完成后推送 tag 到 fork"
+        description: "完成后推送 tag 并发布 Release"
         required: false
         default: true
         type: boolean
 
-# 推送 tag 需要写权限
 permissions:
   contents: write
 
 jobs:
+  # ─────────────────────────────────────────────────────────────
+  # Job 1: 同步 patch, 生成 vX.Y.Z-portfix tag
+  # ─────────────────────────────────────────────────────────────
   sync-patch:
     name: "Sync patch → ${{ inputs.version }}"
     runs-on: ubuntu-latest
-
+    outputs:
+      release-tag: ${{ steps.meta.outputs.release_tag }}
     steps:
       - name: Checkout fork (full history + tags)
         uses: actions/checkout@v4
         with:
-          # 必须拉全历史, 否则 cherry-pick patch/port-fix (annotated tag) 找不到其 commit
           fetch-depth: 0
-          # 拉 tags, 确保 patch/port-fix 可用
           fetch-tags: true
           ref: port-fix
 
@@ -56,8 +60,8 @@ jobs:
           git remote -v
 
       - name: Run sync-patch.sh
+        id: meta
         env:
-          # 用 GITHUB_TOKEN 推送到本 fork
           SYNC_PROXY: ""
         run: |
           ARGS="${{ inputs.version }}"
@@ -65,3 +69,55 @@ jobs:
             ARGS="$ARGS --no-push"
           fi
           ./scripts/sync-patch.sh $ARGS
+
+          # 把生成的 release tag 名透传给下游 release job
+          RELEASE_TAG="${{ inputs.version }}-portfix"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "生成的发布 tag: $RELEASE_TAG"
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 2: 基于新 tag 编译二进制 + 创建 GitHub Release
+  # ─────────────────────────────────────────────────────────────
+  release:
+    name: "Release ${{ needs.sync-patch.outputs.release-tag }}"
+    needs: sync-patch
+    if: ${{ inputs.push == true }}
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.sync-patch.outputs.release-tag }}
+    steps:
+      - name: Checkout at the new -portfix tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Prepare ldflags
+        id: prepare
+        run: |
+          LDFLAGS=$(bash hack/version.sh)
+          echo "ldflags=${LDFLAGS}" >> "$GITHUB_OUTPUT"
+          echo "ldflags: $LDFLAGS"
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: v2.5.1
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LDFLAGS: ${{ steps.prepare.outputs.ldflags }}
+
+      - name: Release info
+        run: |
+          echo "✅ Release 已创建: ${{ env.RELEASE_TAG }}"
+          echo "产物 (GoReleaser 默认):"
+          ls -lh dist/*.tar.gz dist/*checksums* 2>/dev/null || true
