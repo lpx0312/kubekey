@@ -25,6 +25,8 @@ on:
 
 permissions:
   contents: write
+  # 推送官方 tag 历史时, 可能携带 .github/workflows/ 文件变更, 需要 workflows 写权限
+  workflows: write
 
 jobs:
   # ─────────────────────────────────────────────────────────────
