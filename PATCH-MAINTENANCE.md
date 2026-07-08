@@ -107,6 +107,8 @@ gh workflow run sync-patch.yml -R lpx0312/kubekey --ref port-fix -f version=v4.0
 
 ## 新增一个私有补丁（完整流程）
 
+> 📖 **完整无坑版教程见 [ADD-PATCH-TUTORIAL.md](ADD-PATCH-TUTORIAL.md)**，包含每一步的命令、验证方法、以及所有踩过的坑（template trim / cleanup-tag / patch 链不干净 / 网络问题 / 旧集群迁移）的详解。下面是简要步骤。
+
 当你要加第 N 个补丁时，按以下步骤操作。核心原则：**每个补丁是 port-fix 分支上一个独立的 commit，补丁链必须是一条基于 `patch/base` 的干净直线**（不能夹杂 docs/ci 等无关 commit）。
 
 ### 第 1 步：在 port-fix 分支上做修复 commit
