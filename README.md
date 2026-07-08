@@ -95,6 +95,17 @@ git checkout port-fix
 
 以上三种方式都是**幂等**的：同一版本可重复运行，总是覆盖为最新结果。
 
+## 新增私有补丁
+
+发现官方代码还有 bug 需要修复时，按 [ADD-PATCH-TUTORIAL.md](ADD-PATCH-TUTORIAL.md) 的 **9 步流程**操作即可。核心要点：
+
+1. 在 `port-fix` 分支改代码并提交一个 `fix(...)` commit
+2. 基于 `patch/base` 重建干净的补丁链（所有补丁串成一条直线，**不能夹 docs/ci 等无关 commit**），更新 `patch/port-fix` tag
+3. 用 `git format-patch` 生成 `patches/000N-*.patch` 归档，同步更新 README / PATCH-MAINTENANCE / sync-patch.sh
+4. 推送 `port-fix` 分支 + `patch/port-fix` tag（`--force`），然后触发 `sync-patch.yml` 生成新 Release
+
+> ⚠️ 教程里有 **5 个踩坑点详解**（template trim 吃换行、`--cleanup-tag` 毁掉正确 tag、patch 链带垃圾 commit、网络问题、旧集群迁移），动手前务必先读一遍。其中"**重建干净补丁链**"和"**验证发布 tag 的 commit 链底部是官方基线**"两步是关键，做错会导致发布的 tag 指向错误。
+
 ## 自建离线依赖包（ISO）
 
 离线安装 K8s 时，`kk` 需要从 GitHub Release 下载各发行版的系统依赖包 ISO（含 chrony、conntrack、socat 等）。为避免依赖官方 [`kubesphere/kubekey`](https://github.com/kubesphere/kubekey) 的 `iso-latest` Release 消失，本仓库自带改造后的 **GenRepositoryISO** workflow，可在本 fork 内独立构建并发布全部 ISO 依赖包。
