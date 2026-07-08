@@ -115,15 +115,18 @@ jobs:
           echo "ldflags: $LDFLAGS"
 
       # 幂等性: 若同名 Release 已存在 (重复运行同一版本时), 先删除旧的,
-      # 让 GoReleaser 能重新创建。tag 本身由 sync job 已用 --force 更新。
+      # 让 GoReleaser 能重新创建。
+      # ⚠️ 绝对不能用 --cleanup-tag: 那会删掉 sync job 打的正确 tag (指向官方基线+补丁),
+      # 导致 GoReleaser 重新打 tag 时落到 checkout 的默认分支 HEAD 上 (port-fix 分支),
+      # 使 release tag 错误地指向 port-fix 分支而非 "官方版本+补丁"。
+      # 只删 release, 保留 sync job 打的 tag。
       - name: Remove existing release (for idempotent re-runs)
         env:
           GH_TOKEN: ${{ secrets.KK_PAT }}
         run: |
           if gh release view "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG 已存在, 删除后由 GoReleaser 重建"
-            gh release delete "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag || \
-              gh release delete "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" --yes
+            echo "Release $RELEASE_TAG 已存在, 删除后由 GoReleaser 重建 (保留 tag)"
+            gh release delete "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" --yes
           else
             echo "Release $RELEASE_TAG 不存在, 跳过"
           fi
