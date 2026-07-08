@@ -3,7 +3,7 @@
 # 触发方式: 手动 (workflow_dispatch), 在 Actions 页面输入官方版本号 (如 v4.0.6)。
 #
 # 完整流程 (一条流水线):
-#   1. sync: 检出官方 tag → cherry-pick patch/port-fix → 打 vX.Y.Z-portfix tag → 推送
+#   1. sync: 检出官方 tag → cherry-pick 全部私有补丁 (patch/base..patch/port-fix) → 打 vX.Y.Z-portfix tag → 推送
 #   2. release: 基于该 tag checkout → GoReleaser 编译 6 个二进制 → 创建 GitHub Release
 #
 # 这个 workflow 必须存在于 port-fix 分支 (它引用的 patch/port-fix tag 在该分支上)。

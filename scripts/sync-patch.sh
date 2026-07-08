@@ -21,7 +21,8 @@ set -euo pipefail
 # ---------- 配置 ----------
 UPSTREAM_REMOTE="upstream"
 ORIGIN_REMOTE="origin"
-PATCH_TAG="patch/port-fix"          # 你的私有 patch 的稳定引用 tag
+PATCH_BASE="patch/base"             # patch 基线 (官方版本, 不含任何补丁, cherry-pick 起点)
+PATCH_HEAD="patch/port-fix"         # 所有私有补丁的最新汇总点 (cherry-pick 终点)
 PATCH_SUFFIX="-portfix"             # fork 上发布 tag 的后缀 (避开与官方同名 tag 冲突)
 # 网络代理: 默认不使用。本地网络受限时通过环境变量开启, 例:
 #   SYNC_PROXY=http://127.0.0.1:7897 ./scripts/sync-patch.sh v4.0.6
@@ -55,8 +56,13 @@ git remote get-url "$UPSTREAM_REMOTE" >/dev/null 2>&1 || \
   die "未找到 remote '$UPSTREAM_REMOTE'。请先执行: git remote add upstream https://github.com/kubesphere/kubekey.git"
 
 # 确认 patch tag 存在
-git rev-parse "$PATCH_TAG" >/dev/null 2>&1 || \
-  die "未找到 patch tag '$PATCH_TAG'。这是你的私有修复引用, 不能缺失。"
+git rev-parse "$PATCH_BASE" >/dev/null 2>&1 || \
+  die "未找到 patch 基线 tag '$PATCH_BASE'。这是你的私有 patch 起点 (应指向官方基线), 不能缺失。"
+git rev-parse "$PATCH_HEAD" >/dev/null 2>&1 || \
+  die "未找到 patch 汇总 tag '$PATCH_HEAD'。这是你的私有 patch 最新点, 不能缺失。"
+
+# 预计算 patch 数量 (供信息输出用)
+PATCH_COUNT="$(git rev-list --count "${PATCH_BASE}..${PATCH_HEAD}")"
 
 # 保存当前状态, 完成后切回 (必须在任何 checkout 之前抓取)
 # 建议在 port-fix 分支上运行本脚本 (该分支 = 官方基线 + 私有 patch + 本脚本/文档)。
@@ -74,7 +80,7 @@ ORIG_REF="$(git rev-parse HEAD)"
 info "本仓库: $REPO_DIR"
 info "目标版本: $VERSION  (官方 tag)"
 info "发布 tag: ${VERSION}${PATCH_SUFFIX}  (打补丁后的成品, 推送到 fork)"
-info "私有 patch: $PATCH_TAG"
+info "私有 patch: $PATCH_BASE..$PATCH_HEAD (共 $PATCH_COUNT 个补丁)"
 [[ "$PUSH" == "yes" ]] && info "完成后将推送到: $ORIGIN_REMOTE tag ${VERSION}${PATCH_SUFFIX}" || info "已指定 --no-push, 不推送"
 echo ""
 
@@ -111,10 +117,11 @@ info "检出官方 tag $VERSION (不创建分支)..."
 git checkout --detach "$VERSION" 2>&1 | grep -E "HEAD is now|Switched" | head -1
 ok "已检出官方 $VERSION 代码 (detached HEAD)"
 
-# ---------- 4. cherry-pick 私有 patch ----------
-info "cherry-pick 私有 patch ($PATCH_TAG)..."
-if git cherry-pick "$PATCH_TAG"; then
-  ok "cherry-pick 成功, 无冲突"
+# ---------- 4. cherry-pick 私有 patch (范围: base..head, 可含多个补丁) ----------
+PATCH_RANGE="${PATCH_BASE}..${PATCH_HEAD}"
+info "cherry-pick 私有 patch ($PATCH_RANGE, 共 $PATCH_COUNT 个补丁)..."
+if git cherry-pick "$PATCH_RANGE"; then
+  ok "全部 $PATCH_COUNT 个补丁 cherry-pick 成功, 无冲突"
 else
   echo ""
   warn "cherry-pick 出现冲突! 请手动解决后继续。"
@@ -123,11 +130,15 @@ else
   git diff --name-only --diff-filter=U | sed 's/^/    - /'
   echo ""
   echo "  解决方法:"
-  echo "    1. 编辑上述文件, 确保最终代码为 (而非 govalidator.IsHost):"
-  echo "       if strings.ContainsAny(firstPart, \".:\") || firstPart == \"localhost\" {"
-  echo "    2. 确认 import 块已删除 \"github.com/asaskevich/govalidator\""
-  echo "    3. 标记解决并继续:"
+  echo "    1. 编辑上述冲突文件, 保留私有补丁的意图"
+  echo "       - 镜像端口修复 (image.go): host 判断应为"
+  echo "         if strings.ContainsAny(firstPart, \".:\") || firstPart == \"localhost\" {"
+  echo "         并确认 import 块已删除 \"github.com/asaskevich/govalidator\""
+  echo "       - etcd 备份修复 (backup.sh): snapshot save 那行 endpoints 应为"
+  echo "         --endpoints=\"https://localhost:{{ .etcd.port }}\""
+  echo "    2. 标记解决并继续:"
   echo "       git add -A && git cherry-pick --continue"
+  echo "       (若有多个补丁, 可能需要重复解决直到全部完成)"
   echo ""
   die "请解决冲突。当前处于 detached HEAD, 不要在此建分支。
        放弃本次: git cherry-pick --abort; git checkout $ORIG_BRANCH"
@@ -153,7 +164,7 @@ info "打发布 tag $RELEASE_TAG (官方原版 $VERSION 不动)..."
 if git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
   git tag -d "$RELEASE_TAG" >/dev/null
 fi
-git tag -a "$RELEASE_TAG" "$NEW_COMMIT" -m "Release: official $VERSION + private patch ($PATCH_TAG)"
+git tag -a "$RELEASE_TAG" "$NEW_COMMIT" -m "Release: official $VERSION + private patches ($PATCH_RANGE, $PATCH_COUNT commits)"
 ok "本地 tag $RELEASE_TAG 已创建 → $(git rev-parse --short $RELEASE_TAG)"
 echo ""
 ok "成品 $RELEASE_TAG = 官方 $VERSION + 你的私有 patch"

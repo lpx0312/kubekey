@@ -7,11 +7,15 @@
 
 # 🔧 本仓库 = 官方 KubeKey + 私有补丁（port-fix）
 
-> 这是 [`kubesphere/kubekey`](https://github.com/kubesphere/kubekey) 的 **fork**，在官方版本基础上打了一个私有补丁，并附带一键同步工具。下方为补丁说明与使用方法，官方原始 README 内容见 [本节之后](#comparison-of-new-features-in-3x)。
+> 这是 [`kubesphere/kubekey`](https://github.com/kubesphere/kubekey) 的 **fork**，在官方版本基础上打了私有补丁，并附带一键同步工具。下方为补丁说明与使用方法，官方原始 README 内容见 [本节之后](#comparison-of-new-features-in-3x)。
 
 ## 补丁解决了什么问题
 
-支持 **带端口的镜像仓库地址**，例如 `harbor.example.com:7000/library/nginx:latest`。
+本仓库当前维护两个私有补丁：
+
+### 补丁 1：支持带端口的镜像仓库地址
+
+例如 `harbor.example.com:7000/library/nginx:latest`。
 
 **官方 bug**：`normalizeImageName` 用 `govalidator.IsHost()` 判断首段是否为 registry 域名，但该函数对**含 `:`（端口）的字符串返回 false**，导致 `harbor.example.com:7000` 被误判为 project 名，被错误补上 `docker.io/` 前缀，最终报错：
 
@@ -27,6 +31,17 @@ invalid reference: invalid tag "7000/library/nginx:latest"
 ```
 首段含 `.`（域名）或 `:`（端口）或等于 `localhost` 即视为 registry host，与 oras `registry.ParseReference` 的判定规则一致。
 
+### 补丁 2：修复 etcd 定时备份脚本从未成功
+
+**官方 bug**：`kk create cluster` 部署的 etcd 定时备份脚本（`backup_etcd.sh`，由 systemd timer 每 30 分钟触发）**从集群创建第一天起就全部失败，从未产出过一份可用快照**。两个叠加 bug：
+
+1. **变量名写错**：脚本定义的是 `ETCD_ENDPOINTS`，但 `etcdctl snapshot save` 那行引用的是 `$ENDPOINTS`（未定义）。配合 `set -o nounset`，每次必然报 `ENDPOINTS: unbound variable`。
+2. **多端点不支持**：即使修好变量名，`etcdctl snapshot save` 也只接受单个 endpoint，而模板渲染出的是 3 节点列表，会报 `snapshot must be requested to one selected node, not multiple`。
+
+**修复方式**（`builtin/core/roles/etcd/install/templates/backup.sh`）：把 `snapshot save` 那一行的 endpoints 改为本机单点 `https://localhost:{{ .etcd.port }}`，与 kk 安装时一次性备份 role（`roles/etcd/backup`）的做法一致。一次改动同时解决两个 bug。
+
+> ⚠️ **已部署的集群**：升级到补丁版 kk 只能保证**新装的**集群备份正常；旧集群需手动把修好的 `backup.sh` 同步到每台 etcd 节点的 `/usr/local/bin/kube-scripts/backup_etcd.sh`。
+
 ## 获取补丁版二进制
 
 直接从本仓库的 [Releases](https://github.com/lpx0312/kubekey/releases) 下载，命名形如 `kubekey-vX.Y.Z-portfix-<os>-<arch>.tar.gz`（含 6 个平台：linux/windows/darwin × amd64/arm64）。
@@ -39,8 +54,9 @@ invalid reference: invalid tag "7000/library/nginx:latest"
 |------|------|
 | `port-fix` 分支（默认） | 长期维护分支 = 官方基线 + 私有补丁 + 同步脚本/文档 |
 | `master` 分支 | 官方原始内容（备份） |
-| `patch/port-fix` tag | 端口补丁的稳定引用（cherry-pick 时用） |
-| `vX.Y.Z-portfix` tag / Release | 发布产物 = 官方 `vX.Y.Z` + 补丁 |
+| `patch/base` tag | patch 基线（官方版本，不含任何补丁，cherry-pick 起点） |
+| `patch/port-fix` tag | 所有私有补丁的最新汇总点（cherry-pick 终点） |
+| `vX.Y.Z-portfix` tag / Release | 发布产物 = 官方 `vX.Y.Z` + 全部补丁 |
 
 ## 跟随官方新版本（一键同步 + 自动发布）
 

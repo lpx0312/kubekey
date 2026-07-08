@@ -1,0 +1,46 @@
+From c095fce7d323b844145671af0f4d22462765272a Mon Sep 17 00:00:00 2001
+From: lpx <lpx_0312@163.com>
+Date: Wed, 8 Jul 2026 18:21:37 +0800
+Subject: [PATCH] fix(etcd): backup script always failed - unbound var +
+ multi-endpoint
+
+The etcd scheduled backup script (deployed to every etcd node as
+backup_etcd.sh via systemd timer) has never produced a single working
+snapshot since cluster creation. Two compounding bugs in the generated
+template:
+
+1. Unbound variable: the script defines `ETCD_ENDPOINTS` but the
+   `etcdctl snapshot save` line references `$ENDPOINTS`. With
+   `set -o nounset`, every run aborts with "ENDPOINTS: unbound variable".
+
+2. Multi-endpoint not supported: even after fixing the variable name,
+   `etcdctl snapshot save` only accepts a single endpoint. The template
+   renders `ETCD_ENDPOINTS` to the full 3-node list, so it fails with
+   "snapshot must be requested to one selected node, not multiple".
+
+Fix both at once by using the local node endpoint
+`https://localhost:{{ .etcd.port }}`, which is what the one-shot
+backup role (roles/etcd/backup) already does. The local node always
+has a complete, RAFT-consistent copy of the data, so a snapshot taken
+from localhost is fully valid. This drops the dependency on the
+(now unused) `$ETCD_ENDPOINTS` shell var for the snapshot command.
+---
+ builtin/core/roles/etcd/install/templates/backup.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/builtin/core/roles/etcd/install/templates/backup.sh b/builtin/core/roles/etcd/install/templates/backup.sh
+index 6961dd20..121ef472 100644
+--- a/builtin/core/roles/etcd/install/templates/backup.sh
++++ b/builtin/core/roles/etcd/install/templates/backup.sh
+@@ -35,7 +35,7 @@ ETCDCTL_CA_FILE="/etc/ssl/etcd/ssl/ca.crt"
+ # sleep 3
+ 
+ {
+-export ETCDCTL_API=3;$ETCDCTL_PATH --endpoints="$ENDPOINTS" snapshot save $BACKUP_DIR/snapshot.db \
++export ETCDCTL_API=3;$ETCDCTL_PATH --endpoints="https://localhost:{{ .etcd.port }}" snapshot save $BACKUP_DIR/snapshot.db \
+                                    --cacert="$ETCDCTL_CA_FILE" \
+                                    --cert="$ETCDCTL_CERT" \
+                                    --key="$ETCDCTL_KEY"
+-- 
+2.43.0.windows.1
+
