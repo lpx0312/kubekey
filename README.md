@@ -63,6 +63,33 @@ git checkout port-fix
 
 以上三种方式都是**幂等**的：同一版本可重复运行，总是覆盖为最新结果。
 
+## 自建离线依赖包（ISO）
+
+离线安装 K8s 时，`kk` 需要从 GitHub Release 下载各发行版的系统依赖包 ISO（含 chrony、conntrack、socat 等）。为避免依赖官方 [`kubesphere/kubekey`](https://github.com/kubesphere/kubekey) 的 `iso-latest` Release 消失，本仓库自带改造后的 **GenRepositoryISO** workflow，可在本 fork 内独立构建并发布全部 ISO 依赖包。
+
+**产物**：[Releases · iso-latest](https://github.com/lpx0312/kubekey/releases/tag/iso-latest)，共 37 个文件（12 个发行版 × amd64/arm64 + sha256 + harbor 离线包），与官方一一对应。
+
+**方式一：GitHub Actions（推荐）**
+
+进入 [Actions → GenRepositoryISO](https://github.com/lpx0312/kubekey/actions/workflows/gen-repository-iso.yaml) → `Run workflow` → 选择 `port-fix` 分支 → 运行。约 10 分钟后产物覆盖到 `iso-latest` Release。
+
+**方式二：命令行触发**
+
+```bash
+gh workflow run gen-repository-iso.yaml -R lpx0312/kubekey --ref port-fix
+```
+
+**方式三：打 tag 自动触发**
+
+```bash
+git tag -f iso-latest port-fix
+git push origin iso-latest -f
+```
+
+**确定性说明**：改造后的 workflow 删除了上游的 `update-tag` 自动移 tag 逻辑，构建直接使用你触发时所选 ref（分支/tag）指向的 commit，产物版本完全由触发者决定，不会偷偷跟随 `main`。
+
+**风险与隔离**：Kylin 系列依赖第三方镜像 `hxsoong/kylin`，若其不可用只会导致 4 个 kylin job 失败（`fail-fast: false` 已隔离），其余 8 个发行版照常出包。自定义包列表可编辑 [`hack/gen-repository-iso/packages.yaml`](hack/gen-repository-iso/packages.yaml)。
+
 ## 本地编译
 
 ```bash
