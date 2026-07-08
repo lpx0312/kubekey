@@ -11,7 +11,7 @@
 
 ## 补丁解决了什么问题
 
-本仓库当前维护两个私有补丁：
+本仓库当前维护三个私有补丁：
 
 ### 补丁 1：支持带端口的镜像仓库地址
 
@@ -41,6 +41,22 @@ invalid reference: invalid tag "7000/library/nginx:latest"
 **修复方式**（`builtin/core/roles/etcd/install/templates/backup.sh`）：把 `snapshot save` 那一行的 endpoints 改为本机单点 `https://localhost:{{ .etcd.port }}`，与 kk 安装时一次性备份 role（`roles/etcd/backup`）的做法一致。一次改动同时解决两个 bug。
 
 > ⚠️ **已部署的集群**：升级到补丁版 kk 只能保证**新装的**集群备份正常；旧集群需手动把修好的 `backup.sh` 同步到每台 etcd 节点的 `/usr/local/bin/kube-scripts/backup_etcd.sh`。
+
+### 补丁 3：修复 k8s 证书自动续期从未生效
+
+**官方 bug**：`kk create cluster` 部署的 k8s 控制面证书自动续期定时任务（`k8s-certs-renew.timer`，每周触发）**从集群创建起就全部失败，证书到期前不会被自动续期**。三个叠加 bug：
+
+1. **Go template trim 吃掉换行**：续期脚本模板 `renew_script.sh` 的 `{{- if/else/end -}}` 贪婪 trim，渲染后 `#!/bin/bash`、`kubeadmCerts=...`、函数定义挤成一行，bash 语法损坏。
+2. **systemd ExecStart 路径不匹配**：service 指向 `k8s-certs-renew.sh`（不存在），实际部署的是 `renew_script.sh`，每次必然 `status=203/EXEC`。
+3. **日期解析正则失效**：`grep` 用了 PCRE 的 `\s \w`（BRE 不支持），永远匹配空 → 算出负数天数 → 每次都误触发续期（或反过来静默跳过）。
+
+**修复方式**（2 个文件）：
+- `builtin/core/roles/kubernetes/certs/templates/renew_script.sh`：删除 `<v1.20.0` 死代码分支（kubekey v4 最低支持 v1.23），固定用 `kubeadm certs`；`getCertValidDays()` 改用 kubeadm 输出的 `RESIDUAL TIME` 列（`NNNd`），解析失败兜底返回 `9999`（跳过续期）；加 `set -euo pipefail`。
+- `builtin/core/roles/kubernetes/certs/files/k8s-certs-renew.service`：`ExecStart` 改为 `/usr/local/bin/kube-scripts/renew_script.sh`。
+
+> ⚠️ **已部署的集群**：升级补丁版 kk 只保证**新装的**集群续期正常；旧集群需手动同步这两个文件并重启 timer。
+
+> ℹ️ 这是控制面组件证书（kube-apiserver 等，1 年有效期）的自动续期。kubelet 客户端证书由 `rotateCertificates: true` 自动轮转，无需此补丁；CA/etcd 证书由 kk 签发，有效期 10 年。详见 [CERTS-GUIDE.md](CERTS-GUIDE.md)。
 
 ## 获取补丁版二进制
 
