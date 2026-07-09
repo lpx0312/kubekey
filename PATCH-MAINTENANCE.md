@@ -47,6 +47,7 @@ sync-patch.sh 用 **范围 cherry-pick**（`patch/base..patch/port-fix`）一次
 | etcd 定时备份脚本修复（变量未定义 + 多端点） | `builtin/core/roles/etcd/install/templates/backup.sh` | `patches/0002-fix-etcd-backup-script-unbound-var-and-multi-endpoint.patch` |
 | k8s 证书自动续期修复 + 脚本改名（template trim + 正则 + 改名） | `builtin/core/roles/kubernetes/certs/templates/k8s-certs-renew.sh`（原 renew_script.sh）, `files/k8s-certs-renew.service`, `tasks/main.yaml` | `patches/0003-fix-certs-k8s-certs-renew-timer-3-bugs-and-rename.patch` |
 | NFS 默认存储类不生效（引用了错误变量） | `builtin/core/roles/storageclass/nfs/templates/values.yaml` | `patches/0004-fix-nfs-default-storageclass-wrong-variable.patch` |
+| `kk certs renew` 命令直接失败（playbook 和 dependency 引用了不存在的 role） | `builtin/core/playbooks/certs_renew.yaml`, `builtin/core/roles/certs/renew/meta/main.yaml` | `patches/0005-fix-certs-renew-playbook-references-nonexistent-role.patch` |
 
 `patches/` 目录下的 `.patch` 文件是每个补丁的独立归档，用于离线场景（见[离线 patch 文件](#离线-patch-文件)）。
 
@@ -231,11 +232,12 @@ git tag -a v4.0.6-portfix -m "Release: official v4.0.6 + private patches"
 git push origin refs/tags/v4.0.6-portfix
 ```
 
-**冲突的核心判断标准**：每个补丁的"修复意图"必须保留。具体到当前四个补丁：
+**冲突的核心判断标准**：每个补丁的"修复意图"必须保留。具体到当前五个补丁：
 - 镜像端口修复：`normalizeImageName` 里必须是 `strings.ContainsAny(firstPart, ".:")`，不能是官方的 `govalidator.IsHost`
 - etcd 备份修复：`backup.sh` 的 `snapshot save` 行必须是 localhost 单点，不能是多端点列表
 - 证书续期修复：脚本已改名为 `k8s-certs-renew.sh`，不得出现 `{{- if ... <v1.20.0 }}` 死代码分支；`getCertValidDays` 必须用 `RESIDUAL TIME` 列解析；`k8s-certs-renew.service` 的 ExecStart 和 `tasks/main.yaml` 都引用 `k8s-certs-renew.sh`
 - NFS 默认 SC 修复：`nfs/templates/values.yaml` 的 `defaultClass` 必须是 `.storage_class.nfs.default`，不能是 `.storage_class.local.default`
+- certs renew playbook 修复：`playbooks/certs_renew.yaml` 的 role 必须是 `certs/init`（复数）；`certs/renew/meta/main.yaml` 的三个 dependency 必须是 `certs/renew/xxx`（带 `certs/` 前缀）
 
 ---
 
@@ -277,6 +279,7 @@ git am /path/to/patches/0001-*.patch
 git am /path/to/patches/0002-*.patch
 git am /path/to/patches/0003-*.patch
 git am /path/to/patches/0004-*.patch
+git am /path/to/patches/0005-*.patch
 # 若 git am 冲突, 改用 git apply --3way
 ```
 
@@ -288,10 +291,11 @@ git am /path/to/patches/0004-*.patch
 | `patches/0002-fix-etcd-backup-script-unbound-var-and-multi-endpoint.patch` | etcd 定时备份脚本修复 |
 | `patches/0003-fix-certs-k8s-certs-renew-timer-3-bugs-and-rename.patch` | k8s 证书自动续期修复 + 脚本改名 |
 | `patches/0004-fix-nfs-default-storageclass-wrong-variable.patch` | NFS 默认存储类不生效 |
+| `patches/0005-fix-certs-renew-playbook-references-nonexistent-role.patch` | `kk certs renew` 命令直接失败 |
 
 ---
 
-## 四个补丁的修复要点（备查）
+## 五个补丁的修复要点（备查）
 
 ### 补丁 1：镜像仓库地址支持端口
 
@@ -355,3 +359,21 @@ builtin/core/roles/storageclass/nfs/templates/values.yaml:
 
 > ⚠️ 升级 kk 二进制只保证**新装的**集群生效；**已部署的旧集群**可紧急止血（不改代码）：
 > `kubectl patch sc nfs-client -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'`
+
+### 补丁 5：`kk certs renew` 命令直接失败
+
+```
+builtin/core/playbooks/certs_renew.yaml:
+  localhost play 的 role:
+    改前: - cert/init     (单数, 目录不存在)
+    改后: - certs/init    (复数, 与实际目录一致)
+
+builtin/core/roles/certs/renew/meta/main.yaml:
+  三个 dependency:
+    改前: renew/etcd / renew/kubernetes / renew/image-registry        (缺 certs/ 前缀)
+    改后: certs/renew/etcd / certs/renew/kubernetes / certs/renew/image-registry
+```
+
+原因：两处 role 引用都少写了 `certs/` 前缀。`certs_renew.yaml` 写成 `cert/init`（单数），`certs/renew/meta/main.yaml` 的三个 dependency 写成 `renew/xxx`（缺 `certs/`）。其他所有 playbook 和 role 的 dependency 都正确使用完整路径前缀（如 `cni/calico`、`cri/docker`）。这两个拼写错误导致 `kk certs renew` 启动即报 `failed to find role`，命令完全不可用。
+
+> ⚠️ 这个 bug 只影响 kk 二进制（playbook 和 role 都是 `//go:embed` 编译进二进制的）。已部署的集群本身不受影响。重新编译带此补丁的 kk 即可。

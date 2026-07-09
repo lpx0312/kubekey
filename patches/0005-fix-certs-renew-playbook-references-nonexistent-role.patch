@@ -1,0 +1,62 @@
+From 8be8a6e900a9fddf417aa9051e15b57f9143aabd Mon Sep 17 00:00:00 2001
+From: lpx <lpx_0312@163.com>
+Date: Thu, 9 Jul 2026 18:28:00 +0800
+Subject: [PATCH] fix(certs): kk certs renew fails - wrong role references in
+ playbook and deps
+
+Two wrong role references made `kk certs renew` fail immediately:
+
+1. playbooks/certs_renew.yaml referenced "cert/init" (singular), but the
+   actual role directory is "certs/init" (plural). Every other playbook
+   (create_cluster, add_nodes, init_os, init_registry) correctly uses
+   "certs/init".
+
+2. roles/certs/renew/meta/main.yaml listed dependencies as "renew/etcd",
+   "renew/kubernetes", "renew/image-registry" - missing the "certs/"
+   prefix. The actual sub-role directories are certs/renew/etcd etc.
+   Every other role's dependencies correctly use the full path prefix
+   (e.g. cni/calico, cri/docker).
+
+Fix: cert/init -> certs/init; renew/xxx -> certs/renew/xxx
+---
+ builtin/core/playbooks/certs_renew.yaml       | 2 +-
+ builtin/core/roles/certs/renew/meta/main.yaml | 6 +++---
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/builtin/core/playbooks/certs_renew.yaml b/builtin/core/playbooks/certs_renew.yaml
+index 6f8c6643..ca53c946 100644
+--- a/builtin/core/playbooks/certs_renew.yaml
++++ b/builtin/core/playbooks/certs_renew.yaml
+@@ -14,7 +14,7 @@
+ - hosts:
+     - localhost
+   roles:
+-    - cert/init
++    - certs/init
+ 
+ - hosts:
+     - all
+diff --git a/builtin/core/roles/certs/renew/meta/main.yaml b/builtin/core/roles/certs/renew/meta/main.yaml
+index 29526335..54541577 100644
+--- a/builtin/core/roles/certs/renew/meta/main.yaml
++++ b/builtin/core/roles/certs/renew/meta/main.yaml
+@@ -1,13 +1,13 @@
+ ---
+ dependencies:
+-  - role: renew/etcd
++  - role: certs/renew/etcd
+     tags: ["certs"]
+     when: .groups.etcd | default list | has .inventory_hostname
+ 
+-  - role: renew/kubernetes
++  - role: certs/renew/kubernetes
+     tags: ["certs"]
+     when: .groups.kube_control_plane | default list | has .inventory_hostname
+ 
+-  - role: renew/image-registry
++  - role: certs/renew/image-registry
+     tags: ["certs", "image-registry"]
+     when: .groups.image_registry | default list | has .inventory_hostname
+-- 
+2.43.0.windows.1
+
