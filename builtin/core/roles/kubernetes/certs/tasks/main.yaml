@@ -1,8 +1,8 @@
 ---
 - name: Certs | Generate Kubernetes certificate renewal script
   template:
-    src: renew_script.sh
-    dest: /usr/local/bin/kube-scripts/renew_script.sh
+    src: k8s-certs-renew.sh
+    dest: /usr/local/bin/kube-scripts/k8s-certs-renew.sh
     mode: 0755
 
 - name: Certs | Deploy certificate renewal systemd service
