@@ -45,7 +45,8 @@ sync-patch.sh 用 **范围 cherry-pick**（`patch/base..patch/port-fix`）一次
 |------|---------|----------------|
 | 镜像仓库地址支持端口（`harbor:7000/...`） | `pkg/modules/image/image.go`, `pkg/modules/image/image_test.go` | `patches/0001-fix-image-support-registry-addresses-with-a-port.patch` |
 | etcd 定时备份脚本修复（变量未定义 + 多端点） | `builtin/core/roles/etcd/install/templates/backup.sh` | `patches/0002-fix-etcd-backup-script-unbound-var-and-multi-endpoint.patch` |
-| k8s 证书自动续期修复（template trim + 路径 + 正则） | `builtin/core/roles/kubernetes/certs/templates/renew_script.sh`, `builtin/core/roles/kubernetes/certs/files/k8s-certs-renew.service` | `patches/0003-fix-certs-k8s-certs-renew-timer-3-compounding-bugs.patch` |
+| k8s 证书自动续期修复 + 脚本改名（template trim + 正则 + 改名） | `builtin/core/roles/kubernetes/certs/templates/k8s-certs-renew.sh`（原 renew_script.sh）, `files/k8s-certs-renew.service`, `tasks/main.yaml` | `patches/0003-fix-certs-k8s-certs-renew-timer-3-bugs-and-rename.patch` |
+| NFS 默认存储类不生效（引用了错误变量） | `builtin/core/roles/storageclass/nfs/templates/values.yaml` | `patches/0004-fix-nfs-default-storageclass-wrong-variable.patch` |
 
 `patches/` 目录下的 `.patch` 文件是每个补丁的独立归档，用于离线场景（见[离线 patch 文件](#离线-patch-文件)）。
 
@@ -230,10 +231,11 @@ git tag -a v4.0.6-portfix -m "Release: official v4.0.6 + private patches"
 git push origin refs/tags/v4.0.6-portfix
 ```
 
-**冲突的核心判断标准**：每个补丁的"修复意图"必须保留。具体到当前三个补丁：
+**冲突的核心判断标准**：每个补丁的"修复意图"必须保留。具体到当前四个补丁：
 - 镜像端口修复：`normalizeImageName` 里必须是 `strings.ContainsAny(firstPart, ".:")`，不能是官方的 `govalidator.IsHost`
 - etcd 备份修复：`backup.sh` 的 `snapshot save` 行必须是 localhost 单点，不能是多端点列表
-- 证书续期修复：`renew_script.sh` 不得出现 `{{- if ... <v1.20.0 }}` 死代码分支；`getCertValidDays` 必须用 `RESIDUAL TIME` 列解析；`k8s-certs-renew.service` 的 ExecStart 必须是 `renew_script.sh`
+- 证书续期修复：脚本已改名为 `k8s-certs-renew.sh`，不得出现 `{{- if ... <v1.20.0 }}` 死代码分支；`getCertValidDays` 必须用 `RESIDUAL TIME` 列解析；`k8s-certs-renew.service` 的 ExecStart 和 `tasks/main.yaml` 都引用 `k8s-certs-renew.sh`
+- NFS 默认 SC 修复：`nfs/templates/values.yaml` 的 `defaultClass` 必须是 `.storage_class.nfs.default`，不能是 `.storage_class.local.default`
 
 ---
 
@@ -274,6 +276,7 @@ cd /path/to/official-kubekey-source
 git am /path/to/patches/0001-*.patch
 git am /path/to/patches/0002-*.patch
 git am /path/to/patches/0003-*.patch
+git am /path/to/patches/0004-*.patch
 # 若 git am 冲突, 改用 git apply --3way
 ```
 
@@ -283,11 +286,12 @@ git am /path/to/patches/0003-*.patch
 |------|------|
 | `patches/0001-fix-image-support-registry-addresses-with-a-port.patch` | 镜像仓库地址支持端口 |
 | `patches/0002-fix-etcd-backup-script-unbound-var-and-multi-endpoint.patch` | etcd 定时备份脚本修复 |
-| `patches/0003-fix-certs-k8s-certs-renew-timer-3-compounding-bugs.patch` | k8s 证书自动续期修复 |
+| `patches/0003-fix-certs-k8s-certs-renew-timer-3-bugs-and-rename.patch` | k8s 证书自动续期修复 + 脚本改名 |
+| `patches/0004-fix-nfs-default-storageclass-wrong-variable.patch` | NFS 默认存储类不生效 |
 
 ---
 
-## 三个补丁的修复要点（备查）
+## 四个补丁的修复要点（备查）
 
 ### 补丁 1：镜像仓库地址支持端口
 
@@ -314,10 +318,11 @@ builtin/core/roles/etcd/install/templates/backup.sh:
 
 > ⚠️ 升级 kk 二进制只保证**新装的**集群备份正常；**已部署的旧集群**需手动把修好的 `backup.sh` 同步到每台 etcd 节点的 `/usr/local/bin/kube-scripts/backup_etcd.sh`。
 
-### 补丁 3：k8s 证书自动续期修复
+### 补丁 3：k8s 证书自动续期修复 + 脚本改名
 
 ```
-builtin/core/roles/kubernetes/certs/templates/renew_script.sh:
+builtin/core/roles/kubernetes/certs/templates/k8s-certs-renew.sh (原 renew_script.sh):
+  - 文件改名 renew_script.sh → k8s-certs-renew.sh (与 service ExecStart 名实相符)
   - 删除 {{- if .kubernetes.kube_version | semverCompare "<v1.20.0" }} 死代码分支
     (kubekey v4 最低支持 v1.23), 固定 kubeadmCerts='/usr/local/bin/kubeadm certs'
   - 开头加 set -euo pipefail
@@ -327,11 +332,26 @@ builtin/core/roles/kubernetes/certs/templates/renew_script.sh:
             解析失败兜底返回 9999 (跳过续期)
 
 builtin/core/roles/kubernetes/certs/files/k8s-certs-renew.service:
-  ExecStart:
-    改前: /usr/local/bin/kube-scripts/k8s-certs-renew.sh  (文件不存在 → 203/EXEC)
-    改后: /usr/local/bin/kube-scripts/renew_script.sh
+  ExecStart: /usr/local/bin/kube-scripts/k8s-certs-renew.sh
+
+builtin/core/roles/kubernetes/certs/tasks/main.yaml:
+  src/dest 同步改为 k8s-certs-renew.sh
 ```
 
-原因：三个叠加 bug——(1) Go template `{{- -}}` 贪婪 trim 把脚本挤成一行，bash 语法损坏；(2) service ExecStart 指向不存在的文件，timer 每次必败；(3) 日期正则用 PCRE 的 `\s\w` 但 grep 默认 BRE 不支持，匹配永远为空导致误判。
+原因：三个叠加 bug——(1) Go template `{{- -}}` 贪婪 trim 把脚本挤成一行，bash 语法损坏；(2) service ExecStart 指向不存在的文件名，timer 每次必败；(3) 日期正则用 PCRE 的 `\s\w` 但 grep 默认 BRE 不支持，匹配永远为空导致误判。改名让模板、部署文件、systemd 三者名称统一。
 
-> ⚠️ 升级 kk 二进制只保证**新装的**集群续期正常；**已部署的旧集群**需手动同步 `renew_script.sh` 和 `k8s-certs-renew.service` 并 `systemctl daemon-reload && systemctl restart k8s-certs-renew.timer`。
+> ⚠️ 升级 kk 二进制只保证**新装的**集群续期正常；**已部署的旧集群**需手动同步（旧集群脚本名是 `renew_script.sh`，要改名成 `k8s-certs-renew.sh`）+ 更新 `k8s-certs-renew.service`，然后 `systemctl daemon-reload && systemctl restart k8s-certs-renew.timer`。
+
+### 补丁 4：NFS 默认存储类不生效
+
+```
+builtin/core/roles/storageclass/nfs/templates/values.yaml:
+  defaultClass:
+    改前: {{ .storage_class.local.default }}  (读错变量, 永远是 false)
+    改后: {{ .storage_class.nfs.default }}
+```
+
+原因：模板引用了错误的变量 `storage_class.local.default`（固定 false），而非 `storage_class.nfs.default`。导致 config 里设 `nfs.default: true` 不生效，NFS SC 不被标记默认，空 storageClassName 的 PVC 永远 Pending。
+
+> ⚠️ 升级 kk 二进制只保证**新装的**集群生效；**已部署的旧集群**可紧急止血（不改代码）：
+> `kubectl patch sc nfs-client -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'`

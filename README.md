@@ -11,7 +11,7 @@
 
 ## 补丁解决了什么问题
 
-本仓库当前维护三个私有补丁：
+本仓库当前维护四个私有补丁：
 
 ### 补丁 1：支持带端口的镜像仓库地址
 
@@ -50,13 +50,32 @@ invalid reference: invalid tag "7000/library/nginx:latest"
 2. **systemd ExecStart 路径不匹配**：service 指向 `k8s-certs-renew.sh`（不存在），实际部署的是 `renew_script.sh`，每次必然 `status=203/EXEC`。
 3. **日期解析正则失效**：`grep` 用了 PCRE 的 `\s \w`（BRE 不支持），永远匹配空 → 算出负数天数 → 每次都误触发续期（或反过来静默跳过）。
 
-**修复方式**（2 个文件）：
-- `builtin/core/roles/kubernetes/certs/templates/renew_script.sh`：删除 `<v1.20.0` 死代码分支（kubekey v4 最低支持 v1.23），固定用 `kubeadm certs`；`getCertValidDays()` 改用 kubeadm 输出的 `RESIDUAL TIME` 列（`NNNd`），解析失败兜底返回 `9999`（跳过续期）；加 `set -euo pipefail`。
-- `builtin/core/roles/kubernetes/certs/files/k8s-certs-renew.service`：`ExecStart` 改为 `/usr/local/bin/kube-scripts/renew_script.sh`。
+**修复方式**（3 处改动）：
+- `builtin/core/roles/kubernetes/certs/templates/k8s-certs-renew.sh`（原 `renew_script.sh`）：删除 `<v1.20.0` 死代码分支（kubekey v4 最低支持 v1.23），固定用 `kubeadm certs`；`getCertValidDays()` 改用 kubeadm 输出的 `RESIDUAL TIME` 列（`NNNd`），解析失败兜底返回 `9999`（跳过续期）；加 `set -euo pipefail`。
+- `builtin/core/roles/kubernetes/certs/files/k8s-certs-renew.service`：`ExecStart` 为 `/usr/local/bin/kube-scripts/k8s-certs-renew.sh`。
+- **改名**：把脚本从 `renew_script.sh` 改名为 `k8s-certs-renew.sh`，让模板、部署文件、systemd ExecStart 三者名称一致（原 service 引用的 `k8s-certs-renew.sh` 本就不存在，改名后名实相符）。`tasks/main.yaml` 同步更新 src/dest。
 
-> ⚠️ **已部署的集群**：升级补丁版 kk 只保证**新装的**集群续期正常；旧集群需手动同步这两个文件并重启 timer。
+> ⚠️ **已部署的集群**：升级补丁版 kk 只保证**新装的**集群续期正常；旧集群需手动同步脚本和 service 文件并重启 timer（注意旧集群脚本名是 `renew_script.sh`，要一并改成 `k8s-certs-renew.sh`）。
 
 > ℹ️ 这是控制面组件证书（kube-apiserver 等，1 年有效期）的自动续期。kubelet 客户端证书由 `rotateCertificates: true` 自动轮转，无需此补丁；CA/etcd 证书由 kk 签发，有效期 10 年。详见 [CERTS-GUIDE.md](CERTS-GUIDE.md)。
+
+### 补丁 4：修复 NFS 默认存储类不生效
+
+**官方 bug**：NFS StorageClass 的 Helm values 模板 `builtin/core/roles/storageclass/nfs/templates/values.yaml` 第 12 行**引用了错误的变量**：
+
+```yaml
+defaultClass: {{ .storage_class.local.default }}   # ❌ 读的是 local.default，不是 nfs.default
+```
+
+导致在 config 里设置 `storage_class.nfs.default: true` 完全不生效——渲染出的 `defaultClass: false`，NFS StorageClass 不会被标记为默认。集群没有默认 SC → 所有 `storageClassName` 为空的 PVC 永远 Pending（连带 Jenkins、Prometheus 等 Pod 起不来）。
+
+**修复方式**（`builtin/core/roles/storageclass/nfs/templates/values.yaml`，1 行）：
+```diff
+- defaultClass: {{ .storage_class.local.default }}
++ defaultClass: {{ .storage_class.nfs.default }}
+```
+
+> ⚠️ **已部署的集群**：代码修复只对**新装**集群生效。旧集群可紧急止血（不改代码）：`kubectl patch sc nfs-client -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'`
 
 ## 获取补丁版二进制
 

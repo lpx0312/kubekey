@@ -1,0 +1,28 @@
+From 1badc484817d67ea2ff4e226cb70195faa03ee6c Mon Sep 17 00:00:00 2001
+From: lpx <lpx_0312@163.com>
+Date: Thu, 9 Jul 2026 10:36:08 +0800
+Subject: [PATCH] fix(nfs): default StorageClass flag reads wrong variable
+
+values.yaml:12 referenced .storage_class.local.default instead of
+.storage_class.nfs.default, so setting nfs.default: true in config had
+no effect - the NFS StorageClass was never marked as default. PVCs with
+empty storageClassName then stayed Pending forever.
+
+Fix: defaultClass: {{ .storage_class.nfs.default }}
+---
+ builtin/core/roles/storageclass/nfs/templates/values.yaml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/builtin/core/roles/storageclass/nfs/templates/values.yaml b/builtin/core/roles/storageclass/nfs/templates/values.yaml
+index eea07766..e3ea4e8f 100644
+--- a/builtin/core/roles/storageclass/nfs/templates/values.yaml
++++ b/builtin/core/roles/storageclass/nfs/templates/values.yaml
+@@ -9,4 +9,4 @@ nfs:
+ storageClass:
+   # Set StorageClass as the default StorageClass
+   # Ignored if storageClass.create is false
+-  defaultClass: {{ .storage_class.local.default }}
++  defaultClass: {{ .storage_class.nfs.default }}
+-- 
+2.43.0.windows.1
+
