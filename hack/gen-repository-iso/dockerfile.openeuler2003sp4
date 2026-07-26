@@ -1,4 +1,4 @@
-FROM registry.cn-hangzhou.aliyuncs.com/lpx03/openeuler:20.03-lts-sp4-cn as openeuler2003sp4
+FROM registry.cn-hangzhou.aliyuncs.com/lpx03/openeuler:20.03-lts-sp4 as openeuler2003sp4
 
 ARG TARGETARCH
 ARG DIR=openeuler-20.03-sp4-${TARGETARCH}-rpms
