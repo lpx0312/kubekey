@@ -36,6 +36,28 @@ jobs:
             dockerfile: dockerfile.kylinv10sp1
           - name: hce-2.0-rpms
             dockerfile: dockerfile.hce20
+          - name: openeuler-20.03-sp1-rpms
+            dockerfile: dockerfile.openeuler2003sp1
+          - name: openeuler-20.03-sp2-rpms
+            dockerfile: dockerfile.openeuler2003sp2
+          - name: openeuler-20.03-sp3-rpms
+            dockerfile: dockerfile.openeuler2003sp3
+          - name: openeuler-20.03-sp4-rpms
+            dockerfile: dockerfile.openeuler2003sp4
+          - name: openeuler-22.03-sp1-rpms
+            dockerfile: dockerfile.openeuler2203sp1
+          - name: openeuler-22.03-sp2-rpms
+            dockerfile: dockerfile.openeuler2203sp2
+          - name: openeuler-22.03-sp3-rpms
+            dockerfile: dockerfile.openeuler2203sp3
+          - name: openeuler-22.03-sp4-rpms
+            dockerfile: dockerfile.openeuler2203sp4
+          - name: openeuler-24.03-sp1-rpms
+            dockerfile: dockerfile.openeuler2403sp1
+          - name: openeuler-24.03-sp2-rpms
+            dockerfile: dockerfile.openeuler2403sp2
+          - name: openeuler-24.03-sp3-rpms
+            dockerfile: dockerfile.openeuler2403sp3
           - name: ubuntu-18.04-debs
             dockerfile: dockerfile.ubuntu1804
           - name: ubuntu-20.04-debs

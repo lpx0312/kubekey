@@ -1,0 +1,50 @@
+FROM registry.cn-hangzhou.aliyuncs.com/lpx03/openeuler:22.03-lts-sp4-cn as openeuler2203sp4
+
+ARG TARGETARCH
+ARG DIR=openeuler-22.03-sp4-${TARGETARCH}-rpms
+ARG PKGS=".common[],.rpms[]"
+ARG BUILD_TOOLS="createrepo_c genisoimage"
+
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+# openEuler 22.03 LTS SP4 官方源 everything 仓库。两架构 baseurl 不同，按 TARGETARCH 选择。
+# 验证：x86_64/aarch64 的 repodata/repomd.xml 均可访问（HTTP 200）。
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
+       BASEURL="https://repo.openeuler.org/openEuler-22.03-LTS-SP4/everything/x86_64/"; \
+    else \
+       BASEURL="https://repo.openeuler.org/openEuler-22.03-LTS-SP4/everything/aarch64/"; \
+    fi \
+    && echo "[oe-base]" > /etc/yum.repos.d/oe.repo \
+    && echo "name=openEuler 22.03 LTS SP4 Base" >> /etc/yum.repos.d/oe.repo \
+    && echo "baseurl=$BASEURL" >> /etc/yum.repos.d/oe.repo \
+    && echo "enabled=1" >> /etc/yum.repos.d/oe.repo \
+    && echo "gpgcheck=0" >> /etc/yum.repos.d/oe.repo \
+    && rm -f /etc/yum.repos.d/*.repo.* 2>/dev/null || true \
+    && yum clean all \
+    && yum makecache --disablerepo="*" --enablerepo="oe-base"
+
+RUN yum install -y --disablerepo="*" --enablerepo="oe-base" $BUILD_TOOLS \
+    && yum clean all
+
+WORKDIR /package
+
+COPY packages.yaml .
+COPY --from=mikefarah/yq:4.11.1 /usr/bin/yq /usr/bin/yq
+
+# 沿用 kylin/hce 的逐包下载 + 容错模式：
+# openEuler 各版本包集合略有差异，个别包可能不存在，
+# 用 || echo "not found" 跳过，不影响其余包与 ISO 生成。
+RUN mkdir -p ${DIR} \
+    && yq eval "${PKGS}" packages.yaml | while read pkg; do \
+         if [ -n "$pkg" ]; then \
+             echo "Downloading $pkg..."; \
+             yum install -y --downloadonly --downloaddir=${DIR} --disablerepo="*" --enablerepo="oe-base" $pkg || echo "not found: $pkg"; \
+         fi; \
+    done
+
+RUN createrepo_c ${DIR} \
+    && genisoimage -r -o ${DIR}.iso ${DIR}
+
+FROM scratch
+COPY --from=openeuler2203sp4 /package/*.iso /
