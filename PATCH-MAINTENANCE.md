@@ -49,6 +49,7 @@ sync-patch.sh 用 **范围 cherry-pick**（`patch/base..patch/port-fix`）一次
 | NFS 默认存储类不生效（引用了错误变量） | `builtin/core/roles/storageclass/nfs/templates/values.yaml` | `patches/0004-fix-nfs-default-storageclass-wrong-variable.patch` |
 | `kk certs renew` 命令直接失败（playbook 和 dependency 引用了不存在的 role） | `builtin/core/playbooks/certs_renew.yaml`, `builtin/core/roles/certs/renew/meta/main.yaml` | `patches/0005-fix-certs-renew-playbook-references-nonexistent-role.patch` |
 | HCE 2.0（华为云欧拉）作为 worker 节点不被识别 | `builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml`, `builtin/core/roles/native/repository/tasks/install_package.yaml` | `patches/0006-fix-hce-2.0-os-support.patch` |
+| ISO 离线包下载地址硬编码（无法走代理/镜像） | `builtin/core/roles/defaults/defaults/main/10-download.yaml`, `builtin/core/roles/download/tasks/iso.yaml` | `patches/0007-fix-iso-download-host-configurable.patch` |
 
 `patches/` 目录下的 `.patch` 文件是每个补丁的独立归档，用于离线场景（见[离线 patch 文件](#离线-patch-文件)）。
 
@@ -240,6 +241,7 @@ git push origin refs/tags/v4.0.6-portfix
 - NFS 默认 SC 修复：`nfs/templates/values.yaml` 的 `defaultClass` 必须是 `.storage_class.nfs.default`，不能是 `.storage_class.local.default`
 - certs renew playbook 修复：`playbooks/certs_renew.yaml` 的 role 必须是 `certs/init`（复数）；`certs/renew/meta/main.yaml` 的三个 dependency 必须是 `certs/renew/xxx`（带 `certs/` 前缀）
 - HCE 2.0 支持：`01-cluster_require.yaml` 的 `supported_os_distributions` 必须同时含 `hce` 和 `'"hce"'`（带引号变体，因 Go 端解析 `/etc/os-release` 保留引号）；`install_package.yaml` 的 `current_host_type` 必须有 `ID == hce → centos` 分支（HCE 无 `ID_LIKE`，不能靠 `rhel fedora` 匹配）
+- ISO 下载前缀可配置：`10-download.yaml` 的 `download.iso_host` 默认值必须是空字符串 `""`（保持官方行为）；`iso.yaml` 的 URL 模板必须是「设了 iso_host 就用它（含 https:// 前缀，忽略 zone/cn_host），没设走官方逻辑」的 if/else 结构，不能写死字面量，也不能让 iso_host 与 cn_host 叠加
 
 ---
 
@@ -283,6 +285,7 @@ git am /path/to/patches/0003-*.patch
 git am /path/to/patches/0004-*.patch
 git am /path/to/patches/0005-*.patch
 git am /path/to/patches/0006-*.patch
+git am /path/to/patches/0007-*.patch
 # 若 git am 冲突, 改用 git apply --3way
 ```
 
@@ -296,6 +299,7 @@ git am /path/to/patches/0006-*.patch
 | `patches/0004-fix-nfs-default-storageclass-wrong-variable.patch` | NFS 默认存储类不生效 |
 | `patches/0005-fix-certs-renew-playbook-references-nonexistent-role.patch` | `kk certs renew` 命令直接失败 |
 | `patches/0006-fix-hce-2.0-os-support.patch` | HCE 2.0（华为云欧拉）作为 worker 节点不被识别 |
+| `patches/0007-fix-iso-download-host-configurable.patch` | ISO 离线包下载地址硬编码（无法走代理/镜像） |
 
 ---
 
@@ -404,3 +408,35 @@ builtin/core/roles/native/repository/tasks/install_package.yaml:
 ISO 文件名无需额外改动即天然吻合：HCE 的 `ID=hce` + `VERSION_ID=2.0` + 空 `ID_LIKE` 命中 `repository/tasks/main.yaml` 的 else 分支，产出 `system_string=hce-2.0`，正好匹配预构建的 `hce-2.0-rpms-{amd64,arm64}.iso`（由 `hack/gen-repository-iso/dockerfile.hce20` 构建，见 commit cdacb166）。
 
 > ⚠️ 只影响 kk 二进制（`01-cluster_require.yaml` 和 `install_package.yaml` 都是 `//go:embed` 编译进二进制的 defaults/tasks）。重新编译带此补丁的 kk 后，新增 HCE 节点即可正常 add-node。已部署的集群不受影响（只是当时无法加 HCE 节点）。
+
+### 补丁 7：ISO 离线包下载地址硬编码
+
+```
+builtin/core/roles/defaults/defaults/main/10-download.yaml:
+  download:
+    + iso_host: ""   (新增字段, 默认空 = 保持官方行为)
+
+builtin/core/roles/download/tasks/iso.yaml:
+  URL 模板:
+    改前: github.com/kubesphere/kubekey/releases/download/iso-latest/...    (硬编码字面量)
+    改后: if iso_host 非空:
+            {{ iso_host(去尾斜杠) }}/releases/download/iso-latest/...   (完全接管, 含 https://, 忽略 zone/cn_host)
+          else:
+            官方原逻辑(zone=cn 时 qingstor 兜底)
+```
+
+原因：ISO 依赖包（如 `hce-2.0-rpms-{amd64,arm64}.iso`）的下载 URL `https://github.com/kubesphere/kubekey/releases/download/iso-latest/...` **硬编码在 `iso.yaml` 里**，没有任何 config 字段可以配置。`download.iso` 只控制下载哪些 ISO（列表），`download.cn_host` 只在 `zone=cn` 时换一个固定加速域名（`kubekey.pek3b.qingstor.com`，整站反代），都换不成用户自建的 GitHub 专用代理（如 `ghproxy.xxx/github.com/yourname/kubekey`，只反代 github.com）。导致内网或被墙环境做离线打包（`kk artifact export`）时无法从自有源拉 ISO。
+
+新增 `download.iso_host` 字段，**语义是完整 URL 前缀（含 `https://` 和 owner/repo）**。设了就完全接管 ISO URL：
+```yaml
+spec:
+  download:
+    iso_host: https://ghproxy.example.com/github.com/yourname/kubekey
+```
+拼出 `https://ghproxy.example.com/github.com/yourname/kubekey/releases/download/iso-latest/hce-2.0-rpms-amd64.iso`。
+
+**设计要点（为何用「完整 URL 前缀」而非「owner/repo 路径」）**：GitHub 专用代理（如 ghproxy）的路径模式是 `<代理域名>/github.com/<owner>/<repo>/...`，它不是整站反代（不会镜像 `dl.k8s.io` 等）。若像官方 `cn_host` 那样把代理域名当「整站前缀」叠加到 `iso_host` 前，会拼出 `https://<cn_host>/<iso_host>/...` 双重路径导致 404。因此 `iso_host` 必须是完整 URL，设了就**忽略 `zone`/`cn_host`**，避免叠加。
+
+**影响范围极窄**：只改 ISO 下载 URL；普通 binary（etcd/kubelet 等）、镜像、Helm chart 的下载各自走独立模板，不受影响。不设 `iso_host`（默认空）则行为与官方完全一致，老 config 无需改动。
+
+> ⚠️ 只影响 kk 二进制（`10-download.yaml` 和 `iso.yaml` 都是 `//go:embed` 编译进二进制的）。重新编译带此补丁的 kk，并在 config 里设 `download.iso_host`（含 `https://`）即可走自定义源。

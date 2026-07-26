@@ -1024,6 +1024,11 @@ download:
   timeout: 300s
   # 中国区文件存储默认主机
   cn_host: kubekey.pek3b.qingstor.com
+  # ISO 离线依赖包下载的完整 URL 前缀（含 https:// 和 owner/repo）。
+  # 设了就完全接管 ISO 下载 URL（忽略 zone/cn_host），适合 github.com 不可达时走自建代理/镜像。
+  # 例如：https://ghproxy.example.com/github.com/yourname/kubekey
+  # 留空（默认）则走官方源（zone=cn 时由 cn_host 镜像兜底），与官方行为一致。
+  iso_host: ""
   # 目标操作系统
   os: linux
   # 目标 CPU 架构列表

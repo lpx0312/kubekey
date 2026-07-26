@@ -11,7 +11,7 @@
 
 ## 补丁解决了什么问题
 
-本仓库当前维护六个私有补丁：
+本仓库当前维护七个私有补丁：
 
 ### 补丁 1：支持带端口的镜像仓库地址
 
@@ -99,6 +99,26 @@ defaultClass: {{ .storage_class.local.default }}   # ❌ 读的是 local.default
 **ISO 文件名天然吻合**：HCE 的 `ID=hce` + `VERSION_ID=2.0` + 空 `ID_LIKE` 命中 `repository/tasks/main.yaml` 的 else 分支，产出 `system_string=hce-2.0`，正好匹配预构建的 `hce-2.0-rpms-{amd64,arm64}.iso`（由 `hack/gen-repository-iso/dockerfile.hce20` 构建）。
 
 > ⚠️ 只影响 kk 二进制。重新编译带此补丁的 kk 后，新增 HCE 节点即可正常 add-node；已部署的集群不受影响。
+
+### 补丁 7：ISO 离线包下载地址可配置（支持代理/镜像）
+
+**官方 bug**：离线打包（`kk artifact export`）时，ISO 依赖包（如 `hce-2.0-rpms-{amd64,arm64}.iso`、`kylin-v10SP3-rpms-*.iso`）的下载 URL `https://github.com/kubesphere/kubekey/releases/download/iso-latest/...` **硬编码在 `download/tasks/iso.yaml` 里**，没有任何 config 字段可以配置。`download.iso` 只控制下载哪些 ISO（列表），`download.cn_host` 只在 `zone=cn` 时换一个固定加速域名（`kubekey.pek3b.qingstor.com`），都换不成用户自建的 GitHub 代理/镜像（如 `ghproxy.xxx/github.com/yourname/kubekey`）。导致内网或被墙环境无法从自有源拉 ISO。
+
+**修复方式**（2 处）：
+- `10-download.yaml`：`download` 段新增 `iso_host` 字段，**默认空**（保持官方行为）。
+- `iso.yaml`：URL 模板改为：设了 `iso_host` 就完全用它（含 `https://` 前缀，忽略 `zone`/`cn_host`）；没设则走官方原逻辑（`zone=cn` 时 qingstor 兜底）。
+
+**用法**：在 config 里填**完整的 ISO 源前缀**（含 `https://` 和 owner/repo）：
+```yaml
+spec:
+  download:
+    iso_host: https://ghproxy.example.com/github.com/yourname/kubekey
+```
+完整 URL 会拼成 `https://ghproxy.example.com/github.com/yourname/kubekey/releases/download/iso-latest/hce-2.0-rpms-amd64.iso`。
+
+**设计要点**：`iso_host` 是**完整 URL 前缀**（含协议），不是 owner/repo 路径。这样设了就完全接管 ISO URL，**不再与 `cn_host`/`zone=cn` 叠加**（否则会拼出 `https://kubekey.pek3b.qingstor.com/ghproxy.xxx/...` 双重路径 404）。不设则行为与官方完全一致，老 config 无需改动。
+
+**影响范围极窄**：只改 ISO 下载 URL。普通 binary（etcd/kubelet 等）、镜像、Helm chart 各走独立模板，不受影响。
 
 ## 获取补丁版二进制
 

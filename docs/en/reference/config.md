@@ -1025,6 +1025,13 @@ download:
   timeout: 300s
   # Default file storage host for China region
   cn_host: kubekey.pek3b.qingstor.com
+  # Full ISO download URL prefix (scheme + host + owner/repo).
+  # When set, it fully overrides the ISO download URL (zone/cn_host are ignored
+  # for ISO), useful when github.com is unreachable, e.g.
+  #   https://ghproxy.example.com/github.com/yourname/kubekey
+  # When empty (default), ISO URLs fall back to the official source (honoring
+  # zone=cn via cn_host), matching upstream behavior.
+  iso_host: ""
   # Target operating system
   os: linux
   # Target CPU architecture list
