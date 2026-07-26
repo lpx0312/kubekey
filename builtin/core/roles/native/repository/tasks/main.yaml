@@ -19,11 +19,30 @@
           {{- end -}}
       when: .os.release.ID | unquote | eq "kylin"
 
+    # openEuler VERSION_ID only carries the major version (20.03/22.03/24.03);
+    # the SP number lives in VERSION, e.g. "22.03 (LTS-SP3)". Extract it so the
+    # ISO name can match the prebuilt openeuler-<ver>-spN-rpms-{amd64,arm64}.iso.
+    - name: Repository | Check system version when use openEuler
+      set_fact:
+        oe_sp: >-
+          {{- if .os.release.VERSION | contains "SP1" }}
+          -sp1
+          {{- else if .os.release.VERSION | contains "SP2" }}
+          -sp2
+          {{- else if .os.release.VERSION | contains "SP3" }}
+          -sp3
+          {{- else if .os.release.VERSION | contains "SP4" }}
+          -sp4
+          {{- end -}}
+      when: .os.release.ID | unquote | eq "openEuler"
+
     - name: Repository | Define the system string based on distribution
       set_fact:
         system_string: >-
           {{- if .os.release.ID | unquote | eq "kylin" }}
           kylin-{{ .os.release.VERSION_ID | replace "\"" "" | unquote | trim | lower }}{{ .sp_version | trim }}
+          {{- else if .os.release.ID | unquote | eq "openEuler" }}
+          openeuler-{{ .os.release.VERSION_ID | replace "\"" "" | unquote | trim }}{{ .oe_sp | trim | lower }}
           {{- else if .os.release.ID_LIKE | unquote | eq "rhel fedora" }}
           {{ .os.release.ID | replace "\"" "" | unquote | trim | lower  }}{{ .os.release.VERSION_ID | replace "\"" "" | unquote | trim }}
           {{- else }}

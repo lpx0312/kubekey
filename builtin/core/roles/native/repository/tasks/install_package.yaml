@@ -9,6 +9,8 @@
       centos
       {{- else if .os.release.ID | unquote | eq "hce" }}
       centos
+      {{- else if .os.release.ID | unquote | eq "openEuler" }}
+      centos
       {{- end -}}
 
 - name: Repository | Initialize Debian-based repository and install required system packages
