@@ -14,6 +14,8 @@ cluster_require:
     - '"kylin"'
     - hce
     - '"hce"'
+    - openEuler
+    - '"openEuler"'
     - rocky
     - '"rocky"'
   # Required network plugins
