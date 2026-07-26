@@ -13,7 +13,12 @@
     - printf "%s/repository/%s-%s.iso" .binary_dir .item.iso .item.arch | fileExists | not
   http_get_file:
     url: >-
+      {{- $prefix := .download.iso_host | trimSuffix "/" -}}
+      {{- if $prefix | empty -}}
       {{- .zone | eq "cn" | ternary (tpl "https://{{ .download.cn_host }}/" .) "https://" -}}
       github.com/kubesphere/kubekey/releases/download/iso-latest/{{ .item.iso }}-{{ .item.arch }}.iso
+      {{- else -}}
+      {{ $prefix }}/releases/download/iso-latest/{{ .item.iso }}-{{ .item.arch }}.iso
+      {{- end }}
     dest: "{{ .binary_dir }}/repository/{{ .item.iso }}-{{ .item.arch }}.iso"
     timeout: "{{ .download.timeout }}"
