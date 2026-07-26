@@ -34,6 +34,8 @@ jobs:
             dockerfile: dockerfile.kylinv10sp2
           - name: kylin-v10SP1-rpms
             dockerfile: dockerfile.kylinv10sp1
+          - name: hce-2.0-rpms
+            dockerfile: dockerfile.hce20
           - name: ubuntu-18.04-debs
             dockerfile: dockerfile.ubuntu1804
           - name: ubuntu-20.04-debs
