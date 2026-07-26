@@ -3,6 +3,13 @@ download:
   timeout: 300s
   # default cn zone file storage host
   cn_host: kubekey.pek3b.qingstor.com
+  # Full ISO download source prefix (scheme + host + owner/repo), e.g.
+  #   https://github.com/kubesphere/kubekey            (official)
+  #   https://ghproxy.example.com/github.com/yourname/kubekey  (GitHub proxy)
+  # When set, it fully overrides the ISO download URL (cn_host/zone are ignored
+  # for ISO). When empty (default), ISO URLs fall back to the official source,
+  # honoring zone=cn via cn_host as before.
+  iso_host: ""
   os: linux
   arch: [ "amd64" ]
   # offline artifact package for kk.
