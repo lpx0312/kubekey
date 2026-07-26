@@ -48,6 +48,7 @@ sync-patch.sh 用 **范围 cherry-pick**（`patch/base..patch/port-fix`）一次
 | k8s 证书自动续期修复 + 脚本改名（template trim + 正则 + 改名） | `builtin/core/roles/kubernetes/certs/templates/k8s-certs-renew.sh`（原 renew_script.sh）, `files/k8s-certs-renew.service`, `tasks/main.yaml` | `patches/0003-fix-certs-k8s-certs-renew-timer-3-bugs-and-rename.patch` |
 | NFS 默认存储类不生效（引用了错误变量） | `builtin/core/roles/storageclass/nfs/templates/values.yaml` | `patches/0004-fix-nfs-default-storageclass-wrong-variable.patch` |
 | `kk certs renew` 命令直接失败（playbook 和 dependency 引用了不存在的 role） | `builtin/core/playbooks/certs_renew.yaml`, `builtin/core/roles/certs/renew/meta/main.yaml` | `patches/0005-fix-certs-renew-playbook-references-nonexistent-role.patch` |
+| HCE 2.0（华为云欧拉）作为 worker 节点不被识别 | `builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml`, `builtin/core/roles/native/repository/tasks/install_package.yaml` | `patches/0006-fix-hce-2.0-os-support.patch` |
 
 `patches/` 目录下的 `.patch` 文件是每个补丁的独立归档，用于离线场景（见[离线 patch 文件](#离线-patch-文件)）。
 
@@ -238,6 +239,7 @@ git push origin refs/tags/v4.0.6-portfix
 - 证书续期修复：脚本已改名为 `k8s-certs-renew.sh`，不得出现 `{{- if ... <v1.20.0 }}` 死代码分支；`getCertValidDays` 必须用 `RESIDUAL TIME` 列解析；`k8s-certs-renew.service` 的 ExecStart 和 `tasks/main.yaml` 都引用 `k8s-certs-renew.sh`
 - NFS 默认 SC 修复：`nfs/templates/values.yaml` 的 `defaultClass` 必须是 `.storage_class.nfs.default`，不能是 `.storage_class.local.default`
 - certs renew playbook 修复：`playbooks/certs_renew.yaml` 的 role 必须是 `certs/init`（复数）；`certs/renew/meta/main.yaml` 的三个 dependency 必须是 `certs/renew/xxx`（带 `certs/` 前缀）
+- HCE 2.0 支持：`01-cluster_require.yaml` 的 `supported_os_distributions` 必须同时含 `hce` 和 `'"hce"'`（带引号变体，因 Go 端解析 `/etc/os-release` 保留引号）；`install_package.yaml` 的 `current_host_type` 必须有 `ID == hce → centos` 分支（HCE 无 `ID_LIKE`，不能靠 `rhel fedora` 匹配）
 
 ---
 
@@ -280,6 +282,7 @@ git am /path/to/patches/0002-*.patch
 git am /path/to/patches/0003-*.patch
 git am /path/to/patches/0004-*.patch
 git am /path/to/patches/0005-*.patch
+git am /path/to/patches/0006-*.patch
 # 若 git am 冲突, 改用 git apply --3way
 ```
 
@@ -292,6 +295,7 @@ git am /path/to/patches/0005-*.patch
 | `patches/0003-fix-certs-k8s-certs-renew-timer-3-bugs-and-rename.patch` | k8s 证书自动续期修复 + 脚本改名 |
 | `patches/0004-fix-nfs-default-storageclass-wrong-variable.patch` | NFS 默认存储类不生效 |
 | `patches/0005-fix-certs-renew-playbook-references-nonexistent-role.patch` | `kk certs renew` 命令直接失败 |
+| `patches/0006-fix-hce-2.0-os-support.patch` | HCE 2.0（华为云欧拉）作为 worker 节点不被识别 |
 
 ---
 
@@ -377,3 +381,26 @@ builtin/core/roles/certs/renew/meta/main.yaml:
 原因：两处 role 引用都少写了 `certs/` 前缀。`certs_renew.yaml` 写成 `cert/init`（单数），`certs/renew/meta/main.yaml` 的三个 dependency 写成 `renew/xxx`（缺 `certs/`）。其他所有 playbook 和 role 的 dependency 都正确使用完整路径前缀（如 `cni/calico`、`cri/docker`）。这两个拼写错误导致 `kk certs renew` 启动即报 `failed to find role`，命令完全不可用。
 
 > ⚠️ 这个 bug 只影响 kk 二进制（playbook 和 role 都是 `//go:embed` 编译进二进制的）。已部署的集群本身不受影响。重新编译带此补丁的 kk 即可。
+
+### 补丁 6：HCE 2.0 作为 worker 节点不被识别
+
+```
+builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml:
+  supported_os_distributions:
+    + - hce
+    + - '"hce"'          (Go 端 convertBytesToMap 解析 ID="hce" 保留引号,
+                            与 ubuntu/centos/kylin/rocky 的写法一致)
+
+builtin/core/roles/native/repository/tasks/install_package.yaml:
+  current_host_type 分类逻辑:
+    + {{- else if .os.release.ID | unquote | eq "hce" }}
+    + centos            (HCE 无 ID_LIKE 字段, 必须显式特判, 否则 current_host_type
+                          为空 → socat/conntrack/ipset/ebtables/chrony/ipvsadm
+                          等依赖装不上, join 后节点异常)
+```
+
+原因：HCE 2.0（Huawei Cloud EulerOS，`ID=hce`）是基于 openEuler 22.03 LTS 的 RHEL 系发行版，但 `/etc/os-release` 里**没有 `ID_LIKE` 字段**。kubekey 既不在 OS 白名单里，分类逻辑也没有 `ID == hce` 特判（只有 kylin 享受这个待遇），导致 HCE 节点 add-node 时：(1) precheck 直接拒绝；(2) 即使绕过白名单，`current_host_type` 为空，yum 仓库初始化和系统依赖安装整段被跳过。
+
+ISO 文件名无需额外改动即天然吻合：HCE 的 `ID=hce` + `VERSION_ID=2.0` + 空 `ID_LIKE` 命中 `repository/tasks/main.yaml` 的 else 分支，产出 `system_string=hce-2.0`，正好匹配预构建的 `hce-2.0-rpms-{amd64,arm64}.iso`（由 `hack/gen-repository-iso/dockerfile.hce20` 构建，见 commit cdacb166）。
+
+> ⚠️ 只影响 kk 二进制（`01-cluster_require.yaml` 和 `install_package.yaml` 都是 `//go:embed` 编译进二进制的 defaults/tasks）。重新编译带此补丁的 kk 后，新增 HCE 节点即可正常 add-node。已部署的集群不受影响（只是当时无法加 HCE 节点）。

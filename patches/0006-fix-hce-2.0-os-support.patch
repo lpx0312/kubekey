@@ -1,0 +1,58 @@
+From af7b72cb23c4de92604821578e95ebf13d68f4d0 Mon Sep 17 00:00:00 2001
+From: lpx <lpx_0312@163.com>
+Date: Sun, 26 Jul 2026 14:06:47 +0800
+Subject: [PATCH] fix(hce): support HCE 2.0 (Huawei Cloud EulerOS) as a worker
+ node OS
+
+HCE 2.0 (Huawei Cloud EulerOS, ID=hce) is a RHEL-family distribution
+based on openEuler 22.03 LTS. Without these two changes, add-node on
+HCE hosts fails:
+
+1. precheck rejects the node: 'hce' is not in supported_os_distributions
+   (and the quoted variant '"hce"' is also needed, since the Go side
+   convertBytesToMap keeps the quotes when parsing /etc/os-release).
+
+2. even if the whitelist is bypassed, dependency packages
+   (socat/conntrack/ipset/ebtables/chrony/ipvsadm) are never installed:
+   HCE has no ID_LIKE field, so current_host_type stays empty and both
+   the apt and yum install blocks are skipped. Add an explicit
+   'ID == hce -> centos' branch (same pattern kylin already uses).
+
+The ISO filename already lines up without further changes: HCE's
+ID=hce + VERSION_ID=2.0 + empty ID_LIKE hits the else branch in
+repository/tasks/main.yaml, producing system_string=hce-2.0, which
+matches the prebuilt hce-2.0-rpms-{amd64,arm64}.iso.
+---
+ .../core/roles/defaults/defaults/main/01-cluster_require.yaml   | 2 ++
+ builtin/core/roles/native/repository/tasks/install_package.yaml | 2 ++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml b/builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml
+index e804059c..0b0a2055 100644
+--- a/builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml
++++ b/builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml
+@@ -12,6 +12,8 @@ cluster_require:
+     - '"centos"'
+     - kylin
+     - '"kylin"'
++    - hce
++    - '"hce"'
+     - rocky
+     - '"rocky"'
+   # Required network plugins
+diff --git a/builtin/core/roles/native/repository/tasks/install_package.yaml b/builtin/core/roles/native/repository/tasks/install_package.yaml
+index afa4da29..62c0f774 100644
+--- a/builtin/core/roles/native/repository/tasks/install_package.yaml
++++ b/builtin/core/roles/native/repository/tasks/install_package.yaml
+@@ -7,6 +7,8 @@
+       centos
+       {{- else if .os.release.ID | unquote | eq "kylin" }}
+       centos
++      {{- else if .os.release.ID | unquote | eq "hce" }}
++      centos
+       {{- end -}}
+ 
+ - name: Repository | Initialize Debian-based repository and install required system packages
+-- 
+2.43.0.windows.1
+

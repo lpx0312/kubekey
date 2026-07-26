@@ -11,7 +11,7 @@
 
 ## 补丁解决了什么问题
 
-本仓库当前维护四个私有补丁：
+本仓库当前维护六个私有补丁：
 
 ### 补丁 1：支持带端口的镜像仓库地址
 
@@ -76,6 +76,29 @@ defaultClass: {{ .storage_class.local.default }}   # ❌ 读的是 local.default
 ```
 
 > ⚠️ **已部署的集群**：代码修复只对**新装**集群生效。旧集群可紧急止血（不改代码）：`kubectl patch sc nfs-client -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'`
+
+### 补丁 5：修复 `kk certs renew` 命令直接失败
+
+**官方 bug**：`kk certs renew` 启动即报 `failed to find role`，命令完全不可用。两处 role 引用都少写了 `certs/` 前缀：`playbooks/certs_renew.yaml` 写成 `cert/init`（单数，目录不存在）；`certs/renew/meta/main.yaml` 的三个 dependency 写成 `renew/xxx`（缺 `certs/`）。其他所有 playbook 和 role 的 dependency 都正确使用完整路径前缀。
+
+**修复方式**：`cert/init → certs/init`；`renew/xxx → certs/renew/xxx`。
+
+> ⚠️ 只影响 kk 二进制（playbook 和 role 都是 `//go:embed` 编译进二进制的）。重新编译带此补丁的 kk 即可，已部署的集群本身不受影响。
+
+### 补丁 6：支持 HCE 2.0（华为云欧拉）作为 worker 节点
+
+**官方 bug**：HCE 2.0（Huawei Cloud EulerOS，`ID=hce`，基于 openEuler 22.03 LTS 的 RHEL 系发行版）在 kubekey 中**完全不被识别**，add-node 时 HCE 节点会失败。两个叠加问题：
+
+1. **OS 白名单不含 HCE**：`01-cluster_require.yaml` 的 `supported_os_distributions` 只有 ubuntu/centos/kylin/rocky，precheck 直接拒绝 HCE 节点。
+2. **OS 分类无 HCE 特判**：HCE 的 `/etc/os-release` **没有 `ID_LIKE` 字段**（不像普通 RHEL 系是 `rhel fedora`），`install_package.yaml` 的 `current_host_type` 三个分支都不命中 → 结果为空 → yum 仓库初始化和 `socat/conntrack/ipset/ebtables/chrony/ipvsadm` 等系统依赖**整段被跳过**，join 后节点异常。
+
+**修复方式**（2 处）：
+- `01-cluster_require.yaml`：白名单加 `hce` 和 `'"hce"'`（带引号变体，因 Go 端解析 `/etc/os-release` 保留引号，与 ubuntu/centos/kylin 写法一致）。
+- `install_package.yaml`：加 `ID == hce → centos` 特判分支（与 kylin 同样的处理）。
+
+**ISO 文件名天然吻合**：HCE 的 `ID=hce` + `VERSION_ID=2.0` + 空 `ID_LIKE` 命中 `repository/tasks/main.yaml` 的 else 分支，产出 `system_string=hce-2.0`，正好匹配预构建的 `hce-2.0-rpms-{amd64,arm64}.iso`（由 `hack/gen-repository-iso/dockerfile.hce20` 构建）。
+
+> ⚠️ 只影响 kk 二进制。重新编译带此补丁的 kk 后，新增 HCE 节点即可正常 add-node；已部署的集群不受影响。
 
 ## 获取补丁版二进制
 
