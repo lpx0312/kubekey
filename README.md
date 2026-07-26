@@ -185,6 +185,10 @@ git checkout port-fix
 
 > ⚠️ 教程里有 **5 个踩坑点详解**（template trim 吃换行、`--cleanup-tag` 毁掉正确 tag、patch 链带垃圾 commit、网络问题、旧集群迁移），动手前务必先读一遍。其中"**重建干净补丁链**"和"**验证发布 tag 的 commit 链底部是官方基线**"两步是关键，做错会导致发布的 tag 指向错误。
 
+## 新增操作系统适配
+
+需要让 kubekey 支持一个新的 OS（如统信 UOS、麒麟、openEuler 等）作为 worker 节点时，按 [NEW-OS-ADAPTATION-GUIDE.md](NEW-OS-ADAPTATION-GUIDE.md) 的 **完整 SOP** 操作。涵盖：判断适配工作量、准备 Docker 镜像、编写 dockerfile 生成 ISO、改 kubekey 源码（白名单 / OS 分类 / ISO 名特判）、打补丁归档的全流程，并附带历史案例对照表（HCE / openEuler / kylin）和 Checklist。
+
 ## 自建离线依赖包（ISO）
 
 离线安装 K8s 时，`kk` 需要从 GitHub Release 下载各发行版的系统依赖包 ISO（含 chrony、conntrack、socat 等）。为避免依赖官方 [`kubesphere/kubekey`](https://github.com/kubesphere/kubekey) 的 `iso-latest` Release 消失，本仓库自带改造后的 **GenRepositoryISO** workflow，可在本 fork 内独立构建并发布全部 ISO 依赖包。
