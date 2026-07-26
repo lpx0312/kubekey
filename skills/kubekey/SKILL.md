@@ -66,12 +66,15 @@ Generates default config.yaml with cluster software configuration (K8s version, 
 
 **Common Parameters:**
 
-| Parameter | Description | Example |
-|-----------|-------------|---------|
+
+| Parameter           | Description                | Example                     |
+| ------------------- | -------------------------- | --------------------------- |
 | `--with-kubernetes` | Specify Kubernetes version | `--with-kubernetes v1.33.7` |
-| `-o, --output` | Output file path | `-o config.yaml` |
+| `-o, --output`      | Output file path           | `-o config.yaml`            |
+
 
 **Generated Config Structure:**
+
 - `kubernetes`: K8s version, cluster name, API Server, etc.
 - `cni`: CNI plugin, Pod/Service CIDR
 - `cri`: Container runtime configuration
@@ -84,9 +87,11 @@ Generates default inventory.yaml file.
 
 **Parameters:**
 
-| Parameter | Description | Example |
-|-----------|-------------|---------|
+
+| Parameter      | Description      | Example             |
+| -------------- | ---------------- | ------------------- |
 | `-o, --output` | Output file path | `-o inventory.yaml` |
+
 
 The generated inventory contains template nodes that need to be edited with actual node information.
 
@@ -95,24 +100,28 @@ The generated inventory contains template nodes that need to be edited with actu
 Creates cluster based on inventory and config.
 
 Two methods:
+
 1. `kk create cluster -i inventory.yaml -c config.yaml` - Use config file
 2. `kk create cluster -i inventory.yaml --with-kubernetes v1.33.7` - Use default config for K8s version (no file generated)
 
 **Common Parameters:**
 
-| Parameter | Description |
-|-----------|-------------|
-| `-i, --inventory` | Inventory file path |
-| `-c, --config` | Config file path |
+
+| Parameter           | Description                                                           |
+| ------------------- | --------------------------------------------------------------------- |
+| `-i, --inventory`   | Inventory file path                                                   |
+| `-c, --config`      | Config file path                                                      |
 | `--with-kubernetes` | Specify K8s version directly (uses default config, no file generated) |
-| `-f, --force` | Force execution (overwrite existing config) |
-| `-v` | Log level (klog mechanism, higher number = more verbose) |
+| `-f, --force`       | Force execution (overwrite existing config)                           |
+| `-v`                | Log level (klog mechanism, higher number = more verbose)              |
+
 
 ## Inventory File
 
 For detailed format and examples, see: `references/inventory.md`
 
 Includes:
+
 - Complete inventory examples
 - SSH/local connector configuration
 - Host variables (IP, labels, taints)
@@ -124,6 +133,7 @@ Includes:
 For detailed configuration, see: `references/config.md`
 
 Includes:
+
 - Basic structure (cluster_require, certs, image_registry, native)
 - Kubernetes configuration (apiserver, controller-manager, scheduler, kubelet, kube-proxy)
 - CNI network configuration (calico, cilium, flannel, kubeovn)
@@ -176,6 +186,7 @@ kk create cluster -i inventory.yaml --with-kubernetes v1.33.7
 Step 1: Define new node in inventory.yaml hosts section
 
 Step 2: Add to corresponding groups
+
 ```bash
 # Method 1: Add nodes directly in inventory.yaml groups
 kk add nodes -i inventory.yaml -c config.yaml
@@ -237,14 +248,16 @@ When a user asks about KubeKey or cluster operations, follow this approach:
 
 Prepare the following information:
 
-| Field | Description | Example |
-|-------|-------------|---------|
-| Node Name | Unique identifier | node1, master1, worker1 |
-| IP Address | Node network address | 192.168.1.10 |
-| SSH Port | Default 22 | 22 |
-| SSH User | Login username | root |
+
+| Field       | Description                  | Example                                       |
+| ----------- | ---------------------------- | --------------------------------------------- |
+| Node Name   | Unique identifier            | node1, master1, worker1                       |
+| IP Address  | Node network address         | 192.168.1.10                                  |
+| SSH Port    | Default 22                   | 22                                            |
+| SSH User    | Login username               | root                                          |
 | Auth Method | Password or private key path | password: "xxx" or private_key: ~/.ssh/id_rsa |
-| Node Role | control_plane/worker/etcd | Choose based on requirements |
+| Node Role   | control_plane/worker/etcd    | Choose based on requirements                  |
+
 
 #### Step 2: Generate Inventory Template
 
@@ -280,6 +293,7 @@ kk create cluster -i inventory.yaml --with-kubernetes v1.33.7
 ### Create HA Cluster
 
 inventory.yaml needs to contain:
+
 - 3 etcd nodes
 - 3 control plane nodes
 - Multiple worker nodes
@@ -307,6 +321,7 @@ When running kk on macOS, you may encounter the following issues due to the defa
 #### 1. `zsh: no matches found: *.sh`
 
 **Symptom**: Playbook fails with glob pattern errors like:
+
 ```
 zsh:1: no matches found: /etc/kubekey/scripts/pre_install_*.sh
 ```
@@ -314,6 +329,7 @@ zsh:1: no matches found: /etc/kubekey/scripts/pre_install_*.sh
 **Root Cause**: macOS default shell is zsh, which has different glob behavior from bash.
 
 **Fix**: Set SHELL to bash before running kk commands:
+
 ```bash
 export SHELL=/bin/bash
 kk create cluster -i inventory.yaml -c config.yaml
@@ -322,6 +338,7 @@ kk create cluster -i inventory.yaml -c config.yaml
 #### 2. `command not found: mkdir`
 
 **Symptom**: Commands like `mkdir` or `rm` fail on localhost with:
+
 ```
 zsh:4: command not found: mkdir
 ```
@@ -355,3 +372,4 @@ kk add nodes --help
 # View version
 kk version
 ```
+
