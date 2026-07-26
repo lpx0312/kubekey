@@ -6,6 +6,7 @@ KubeKey 为以下发行版预编译了系统依赖包，可在 [iso-latest](http
 - CentOS 8
 - Debian 10 / 11
 - Kylin V10SP1 / V10SP2 / V10SP3 / V10SP3-2403
+- HCE 2.0 (Huawei Cloud EulerOS)
 - Ubuntu 18.04 / 20.04 / 22.04 / 24.04
 
 > 注：部分发行版（如 CentOS 7、Ubuntu 16.04）在仓库中存在 Dockerfile，但因版本过老、官方已停止维护等原因，未纳入 [iso-latest](https://github.com/kubesphere/kubekey/releases/tag/iso-latest) 的自动构建。具体请以 `.github/workflows/gen-repository-iso.yaml` 中的构建矩阵为准。

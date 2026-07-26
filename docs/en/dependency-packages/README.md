@@ -6,6 +6,7 @@ KubeKey provides pre-compiled system dependency packages for the following distr
 - CentOS 8
 - Debian 10 / 11
 - Kylin V10SP1 / V10SP2 / V10SP3 / V10SP3-2403
+- HCE 2.0 (Huawei Cloud EulerOS)
 - Ubuntu 18.04 / 20.04 / 22.04 / 24.04
 
 > Note: Some distributions (e.g. CentOS 7, Ubuntu 16.04) have Dockerfiles in the repository, but are not included in the [iso-latest](https://github.com/kubesphere/kubekey/releases/tag/iso-latest) automated build due to being EOL or no longer officially maintained. Please refer to `.github/workflows/gen-repository-iso.yaml` for the exact build matrix.
