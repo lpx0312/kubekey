@@ -11,7 +11,7 @@
 
 ## 补丁解决了什么问题
 
-本仓库当前维护七个私有补丁：
+本仓库当前维护八个私有补丁：
 
 ### 补丁 1：支持带端口的镜像仓库地址
 
@@ -119,6 +119,23 @@ spec:
 **设计要点**：`iso_host` 是**完整 URL 前缀**（含协议），不是 owner/repo 路径。这样设了就完全接管 ISO URL，**不再与 `cn_host`/`zone=cn` 叠加**（否则会拼出 `https://kubekey.pek3b.qingstor.com/ghproxy.xxx/...` 双重路径 404）。不设则行为与官方完全一致，老 config 无需改动。
 
 **影响范围极窄**：只改 ISO 下载 URL。普通 binary（etcd/kubelet 等）、镜像、Helm chart 各走独立模板，不受影响。
+
+### 补丁 8：支持 openEuler 20.03/22.03/24.03 LTS 作为 worker 节点
+
+**官方 bug**：openEuler（`ID=openEuler`，20.03 / 22.03 / 24.03 三大 LTS 系列，每系列 SP1–SP4）在 kubekey 中**完全不被识别**，add-node 时 openEuler 节点会失败。比 HCE 2.0 多一层问题，共三个叠加：
+
+1. **OS 白名单不含 openEuler**：`01-cluster_require.yaml` 的 `supported_os_distributions` 只有 ubuntu/centos/kylin/hce/rocky，precheck 直接拒绝 openEuler 节点。
+2. **OS 分类无 openEuler 特判**：openEuler 的 `/etc/os-release` **没有 `ID_LIKE` 字段**（和 HCE 一样），`install_package.yaml` 的 `current_host_type` 分支都不命中 → 结果为空 → yum 仓库初始化和 `socat/conntrack/ipset/ebtables/chrony/ipvsadm` 等系统依赖**整段被跳过**，join 后节点异常。
+3. **ISO 文件名带 SP 但取不到**（openEuler 独有，HCE 没这问题）：openEuler 一个主版本对应**多个 SP 的 ISO**（如 `openeuler-22.03-sp1/sp2/sp3/sp4-rpms-*.iso`，共 11 个），但 `VERSION_ID` 只携带主版本号（`22.03`），区分 SP 的信息**只在 `VERSION`**（`22.03 (LTS-SP3)`）。原 `system_string` 的 else 分支会让 4 个 SP 坍缩成同一个 `openeuler-22.03`，**4 个 ISO 一个都选不中**。
+
+**修复方式**（3 处）：
+- `01-cluster_require.yaml`：白名单加 `openEuler` 和 `'"openEuler"'`（注意大写 E）。
+- `install_package.yaml`：加 `ID == openEuler → centos` 特判分支（与 kylin/hce 同样处理）。
+- `repository/tasks/main.yaml`：仿 kylin 的 `sp_version` 特判，新增 `oe_sp`（从 `VERSION` 提取 `SP1–SP4` 拼成小写后缀 `-sp1`..`-sp4`）和 system_string 的 openEuler 分支（`openeuler-<VERSION_ID><oe_sp>`），产出 `openeuler-22.03-sp3` 等精确匹配 11 个预构建 ISO。
+
+**已验证**：用仓库实际的 sprig FuncMap + KK `unquote` 渲染，全部 11 个版本（bare 和 quoted 两种 os-release 形式）都正确产出匹配的 ISO 名。
+
+> ⚠️ 只影响 kk 二进制。重新编译带此补丁的 kk 后，新增 openEuler 节点即可正常 add-node；已部署的集群不受影响。ISO 依赖包（`openeuler-*-rpms-*.iso`）已构建并发布到 `iso-latest` Release（见 commit `89dbc235`）。
 
 ## 获取补丁版二进制
 

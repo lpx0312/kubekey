@@ -50,6 +50,7 @@ sync-patch.sh 用 **范围 cherry-pick**（`patch/base..patch/port-fix`）一次
 | `kk certs renew` 命令直接失败（playbook 和 dependency 引用了不存在的 role） | `builtin/core/playbooks/certs_renew.yaml`, `builtin/core/roles/certs/renew/meta/main.yaml` | `patches/0005-fix-certs-renew-playbook-references-nonexistent-role.patch` |
 | HCE 2.0（华为云欧拉）作为 worker 节点不被识别 | `builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml`, `builtin/core/roles/native/repository/tasks/install_package.yaml` | `patches/0006-fix-hce-2.0-os-support.patch` |
 | ISO 离线包下载地址硬编码（无法走代理/镜像） | `builtin/core/roles/defaults/defaults/main/10-download.yaml`, `builtin/core/roles/download/tasks/iso.yaml` | `patches/0007-fix-iso-download-host-configurable.patch` |
+| openEuler 20.03/22.03/24.03 LTS 作为 worker 节点不被识别 | `builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml`, `builtin/core/roles/native/repository/tasks/install_package.yaml`, `builtin/core/roles/native/repository/tasks/main.yaml` | `patches/0008-fix-openeuler-os-support.patch` |
 
 `patches/` 目录下的 `.patch` 文件是每个补丁的独立归档，用于离线场景（见[离线 patch 文件](#离线-patch-文件)）。
 
@@ -234,7 +235,7 @@ git tag -a v4.0.6-portfix -m "Release: official v4.0.6 + private patches"
 git push origin refs/tags/v4.0.6-portfix
 ```
 
-**冲突的核心判断标准**：每个补丁的"修复意图"必须保留。具体到当前五个补丁：
+**冲突的核心判断标准**：每个补丁的"修复意图"必须保留。具体到当前八个补丁：
 - 镜像端口修复：`normalizeImageName` 里必须是 `strings.ContainsAny(firstPart, ".:")`，不能是官方的 `govalidator.IsHost`
 - etcd 备份修复：`backup.sh` 的 `snapshot save` 行必须是 localhost 单点，不能是多端点列表
 - 证书续期修复：脚本已改名为 `k8s-certs-renew.sh`，不得出现 `{{- if ... <v1.20.0 }}` 死代码分支；`getCertValidDays` 必须用 `RESIDUAL TIME` 列解析；`k8s-certs-renew.service` 的 ExecStart 和 `tasks/main.yaml` 都引用 `k8s-certs-renew.sh`
@@ -242,6 +243,7 @@ git push origin refs/tags/v4.0.6-portfix
 - certs renew playbook 修复：`playbooks/certs_renew.yaml` 的 role 必须是 `certs/init`（复数）；`certs/renew/meta/main.yaml` 的三个 dependency 必须是 `certs/renew/xxx`（带 `certs/` 前缀）
 - HCE 2.0 支持：`01-cluster_require.yaml` 的 `supported_os_distributions` 必须同时含 `hce` 和 `'"hce"'`（带引号变体，因 Go 端解析 `/etc/os-release` 保留引号）；`install_package.yaml` 的 `current_host_type` 必须有 `ID == hce → centos` 分支（HCE 无 `ID_LIKE`，不能靠 `rhel fedora` 匹配）
 - ISO 下载前缀可配置：`10-download.yaml` 的 `download.iso_host` 默认值必须是空字符串 `""`（保持官方行为）；`iso.yaml` 的 URL 模板必须是「设了 iso_host 就用它（含 https:// 前缀，忽略 zone/cn_host），没设走官方逻辑」的 if/else 结构，不能写死字面量，也不能让 iso_host 与 cn_host 叠加
+- openEuler 支持：`01-cluster_require.yaml` 的 `supported_os_distributions` 必须同时含 `openEuler` 和 `'"openEuler"'`（注意大写 E，带引号变体）；`install_package.yaml` 的 `current_host_type` 必须有 `ID == openEuler → centos` 分支（openEuler 无 `ID_LIKE`，不能靠 `rhel fedora` 匹配）；`repository/tasks/main.yaml` 必须有 `oe_sp` 特判（从 `VERSION` 的 `SP1/SP2/SP3/SP4` 提取小写后缀）和 system_string 的 openEuler 分支（`openeuler-<VERSION_ID><oe_sp>`），否则同一主版本的多个 SP 会坍缩成同一个 ISO 名
 
 ---
 
@@ -286,6 +288,7 @@ git am /path/to/patches/0004-*.patch
 git am /path/to/patches/0005-*.patch
 git am /path/to/patches/0006-*.patch
 git am /path/to/patches/0007-*.patch
+git am /path/to/patches/0008-*.patch
 # 若 git am 冲突, 改用 git apply --3way
 ```
 
@@ -300,6 +303,7 @@ git am /path/to/patches/0007-*.patch
 | `patches/0005-fix-certs-renew-playbook-references-nonexistent-role.patch` | `kk certs renew` 命令直接失败 |
 | `patches/0006-fix-hce-2.0-os-support.patch` | HCE 2.0（华为云欧拉）作为 worker 节点不被识别 |
 | `patches/0007-fix-iso-download-host-configurable.patch` | ISO 离线包下载地址硬编码（无法走代理/镜像） |
+| `patches/0008-fix-openeuler-os-support.patch` | openEuler 20.03/22.03/24.03 LTS 作为 worker 节点不被识别 |
 
 ---
 
@@ -440,3 +444,34 @@ spec:
 **影响范围极窄**：只改 ISO 下载 URL；普通 binary（etcd/kubelet 等）、镜像、Helm chart 的下载各自走独立模板，不受影响。不设 `iso_host`（默认空）则行为与官方完全一致，老 config 无需改动。
 
 > ⚠️ 只影响 kk 二进制（`10-download.yaml` 和 `iso.yaml` 都是 `//go:embed` 编译进二进制的）。重新编译带此补丁的 kk，并在 config 里设 `download.iso_host`（含 `https://`）即可走自定义源。
+
+### 补丁 8：openEuler 作为 worker 节点不被识别
+
+```
+builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml:
+  supported_os_distributions:
+    + - openEuler
+    + - '"openEuler"'    (注意大写 E; Go 端 convertBytesToMap 解析 ID="openEuler"
+                          保留引号, 与 ubuntu/centos/kylin/hce/rocky 的写法一致)
+
+builtin/core/roles/native/repository/tasks/install_package.yaml:
+  current_host_type 分类逻辑:
+    + {{- else if .os.release.ID | unquote | eq "openEuler" }}
+    + centos            (openEuler 无 ID_LIKE 字段, 必须显式特判, 否则
+                          current_host_type 为空 → socat/conntrack/ipset/
+                          ebtables/chrony/ipvsadm 等依赖装不上, join 后节点异常)
+
+builtin/core/roles/native/repository/tasks/main.yaml:               (openEuler 独有, HCE 不需要)
+  + oe_sp set_fact: 从 VERSION 的 SP1/SP2/SP3/SP4 提取小写后缀 (-sp1..-sp4)
+  + system_string 增加 openEuler 分支:
+      openeuler-{{ VERSION_ID }}{{ oe_sp | lower }}
+      (例: 22.03 + LTS-SP3 → openeuler-22.03-sp3)
+```
+
+原因：openEuler（`ID=openEuler`，20.03 / 22.03 / 24.03 三大 LTS 系列，每系列 SP1–SP4）是 RHEL 系发行版，但 `/etc/os-release` 里**没有 `ID_LIKE` 字段**，和 HCE 2.0 症状完全一致（白名单不收 + 分类不命中 → precheck 拒绝 + 依赖整段跳过）。前两处改动和 HCE 补丁完全对称。
+
+**额外一层问题（HCE 没有而 openEuler 有）—— ISO 文件名带 SP 但 `system_string` 取不到**：HCE 一个主版本只对应一个 ISO（`hce-2.0-rpms-*.iso`），`ID + VERSION_ID` 拼出来的 `hce-2.0` 天然吻合 else 分支。openEuler 则是**一个主版本对应多个 SP 的 ISO**，如 `openeuler-22.03-sp1/sp2/sp3/sp4-rpms-{amd64,arm64}.iso`（共 11 个，见 commit 89dbc235）。而 `VERSION_ID` 只携带主版本号（`22.03`），区分 SP 的信息**只在 `VERSION` 字段**里（`22.03 (LTS-SP3)`）。原 else 分支 `openeuler-{{ VERSION_ID }}` 会让 4 个 SP 坍缩成同一个 `openeuler-22.03`，**4 个 ISO 一个都选不中**。
+
+修复方式参照 kylin 的 `sp_version` 特判：新增 `oe_sp` set_fact（用 `contains` 从 `VERSION` 提取 `SP1–SP4`，拼成小写后缀 `-sp1`..`-sp4`），并在 `system_string` 加 openEuler 分支。已用仓库实际的 sprig FuncMap + KK `unquote` 验证全部 11 个版本（bare 和 quoted 两种 os-release 形式）都正确渲染出 `openeuler-<ver>-spN`，精确匹配预构建 ISO 文件名。
+
+> ⚠️ 只影响 kk 二进制（3 个 yaml 都是 `//go:embed` 编译进二进制的 defaults/tasks）。重新编译带此补丁的 kk 后，新增 openEuler 节点即可正常 add-node。已部署的集群不受影响。ISO 依赖包（`openeuler-*-rpms-*.iso`）已由 `hack/gen-repository-iso/dockerfile.openeuler*` 构建并发布到 `iso-latest` Release。

@@ -1,0 +1,108 @@
+From 51f3426be2d2a8e576567c7bec92fc7a7ea51fb7 Mon Sep 17 00:00:00 2001
+From: lpx <lpx_0312@163.com>
+Date: Sun, 26 Jul 2026 21:15:59 +0800
+Subject: [PATCH] fix(openeuler): support openEuler 20.03/22.03/24.03 LTS as
+ worker node OS
+
+openEuler (ID=openEuler, based on the openEuler 20.03/22.03/24.03 LTS
+series, SP1-SP4) is a RHEL-family distribution that kubekey does not
+recognize. Without these three changes, add-node on openEuler hosts
+fails the same way HCE 2.0 did, plus an extra ISO-name mismatch:
+
+1. precheck rejects the node: 'openEuler' is not in
+   supported_os_distributions (and the quoted variant '"openEuler"'
+   is also needed, since the Go side convertBytesToMap keeps the
+   quotes when parsing /etc/os-release).
+
+2. even if the whitelist is bypassed, dependency packages
+   (socat/conntrack/ipset/ebtables/chrony/ipvsadm) are never
+   installed: openEuler has no ID_LIKE field, so current_host_type
+   stays empty and both the apt and yum install blocks are skipped.
+   Add an explicit 'ID == openEuler -> centos' branch (same pattern
+   kylin/hce already use).
+
+3. (openEuler-only, not needed for HCE) the prebuilt ISO filename
+   carries the SP number, e.g. openeuler-22.03-sp3-rpms-amd64.iso, but
+   VERSION_ID only holds the major version (22.03). The SP number lives
+   in VERSION, e.g. "22.03 (LTS-SP3)". Without a special case the else
+   branch in repository/tasks/main.yaml collapses every SP of a major
+   version onto the same system_string=openeuler-22.03, so none of the
+   four SP-specific ISOs is ever selected. Add a kylin-style oe_sp
+   set_fact (extracts SP1-SP4 from VERSION) plus an openEuler branch in
+   system_string, producing openeuler-<ver>-spN which matches all 11
+   prebuilt openeuler-*-rpms-{amd64,arm64}.iso (20.03 SP1-SP4,
+   22.03 SP1-SP4, 24.03 SP1-SP3).
+
+Verified the system_string template renders correctly for all 11
+versions with the real sprig FuncMap + KK unquote (both bare and
+quoted os-release forms).
+---
+ .../defaults/main/01-cluster_require.yaml     |  2 ++
+ .../repository/tasks/install_package.yaml     |  2 ++
+ .../roles/native/repository/tasks/main.yaml   | 19 +++++++++++++++++++
+ 3 files changed, 23 insertions(+)
+
+diff --git a/builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml b/builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml
+index 0b0a2055..ddd41ae8 100644
+--- a/builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml
++++ b/builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml
+@@ -14,6 +14,8 @@ cluster_require:
+     - '"kylin"'
+     - hce
+     - '"hce"'
++    - openEuler
++    - '"openEuler"'
+     - rocky
+     - '"rocky"'
+   # Required network plugins
+diff --git a/builtin/core/roles/native/repository/tasks/install_package.yaml b/builtin/core/roles/native/repository/tasks/install_package.yaml
+index 62c0f774..91293493 100644
+--- a/builtin/core/roles/native/repository/tasks/install_package.yaml
++++ b/builtin/core/roles/native/repository/tasks/install_package.yaml
+@@ -9,6 +9,8 @@
+       centos
+       {{- else if .os.release.ID | unquote | eq "hce" }}
+       centos
++      {{- else if .os.release.ID | unquote | eq "openEuler" }}
++      centos
+       {{- end -}}
+ 
+ - name: Repository | Initialize Debian-based repository and install required system packages
+diff --git a/builtin/core/roles/native/repository/tasks/main.yaml b/builtin/core/roles/native/repository/tasks/main.yaml
+index e088bf2e..f95a79f5 100644
+--- a/builtin/core/roles/native/repository/tasks/main.yaml
++++ b/builtin/core/roles/native/repository/tasks/main.yaml
+@@ -19,11 +19,30 @@
+           {{- end -}}
+       when: .os.release.ID | unquote | eq "kylin"
+ 
++    # openEuler VERSION_ID only carries the major version (20.03/22.03/24.03);
++    # the SP number lives in VERSION, e.g. "22.03 (LTS-SP3)". Extract it so the
++    # ISO name can match the prebuilt openeuler-<ver>-spN-rpms-{amd64,arm64}.iso.
++    - name: Repository | Check system version when use openEuler
++      set_fact:
++        oe_sp: >-
++          {{- if .os.release.VERSION | contains "SP1" }}
++          -sp1
++          {{- else if .os.release.VERSION | contains "SP2" }}
++          -sp2
++          {{- else if .os.release.VERSION | contains "SP3" }}
++          -sp3
++          {{- else if .os.release.VERSION | contains "SP4" }}
++          -sp4
++          {{- end -}}
++      when: .os.release.ID | unquote | eq "openEuler"
++
+     - name: Repository | Define the system string based on distribution
+       set_fact:
+         system_string: >-
+           {{- if .os.release.ID | unquote | eq "kylin" }}
+           kylin-{{ .os.release.VERSION_ID | replace "\"" "" | unquote | trim | lower }}{{ .sp_version | trim }}
++          {{- else if .os.release.ID | unquote | eq "openEuler" }}
++          openeuler-{{ .os.release.VERSION_ID | replace "\"" "" | unquote | trim }}{{ .oe_sp | trim | lower }}
+           {{- else if .os.release.ID_LIKE | unquote | eq "rhel fedora" }}
+           {{ .os.release.ID | replace "\"" "" | unquote | trim | lower  }}{{ .os.release.VERSION_ID | replace "\"" "" | unquote | trim }}
+           {{- else }}
+-- 
+2.43.0.windows.1
+
