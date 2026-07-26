@@ -1,0 +1,71 @@
+From fda350b3a151f82c90690695960f1536729763f8 Mon Sep 17 00:00:00 2001
+From: lpx <lpx_0312@163.com>
+Date: Sun, 26 Jul 2026 16:14:12 +0800
+Subject: [PATCH] fix(iso): make ISO download prefix configurable via
+ download.iso_host
+
+The ISO download URL was hardcoded to github.com/kubesphere/kubekey in
+download/tasks/iso.yaml. Users behind a firewall or GitHub proxy cannot
+reach that host, and previously had to either set zone=cn (which only
+swaps in a fixed qingstor site-mirror) or hack the embedded yaml.
+
+Add a new download.iso_host config field (default empty = official behavior).
+When set, it fully overrides the ISO download URL (scheme + host + owner/repo,
+e.g. https://ghproxy.example.com/github.com/yourname/kubekey), ignoring
+zone/cn_host for ISO. When empty, ISO URLs fall back to the official source,
+honoring zone=cn via cn_host as before.
+
+Why full URL prefix (not owner/repo path): GitHub-specific proxies like
+ghproxy only reverse-proxy github.com, so prepending the proxy host to an
+owner/repo path (the way cn_host does for the site-mirror) would yield a
+double-path 404. A full URL prefix avoids the cn_host/iso_host interaction.
+
+Scope is intentionally narrow: only the ISO download URL changes.
+Binary/image/chart/tools downloads are unaffected (separate templates).
+Default behavior is identical to before, so existing configs need no change.
+
+Tested: kk artifact export with iso_host=https://gh.1102345.xyz/github.com/lpx0312/kubekey
+successfully downloaded hce-2.0-rpms-amd64.iso (38MB) from the proxy.
+---
+ builtin/core/roles/defaults/defaults/main/10-download.yaml | 7 +++++++
+ builtin/core/roles/download/tasks/iso.yaml                 | 5 +++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/builtin/core/roles/defaults/defaults/main/10-download.yaml b/builtin/core/roles/defaults/defaults/main/10-download.yaml
+index 30dac8a4..23611ef8 100644
+--- a/builtin/core/roles/defaults/defaults/main/10-download.yaml
++++ b/builtin/core/roles/defaults/defaults/main/10-download.yaml
+@@ -3,6 +3,13 @@ download:
+   timeout: 300s
+   # default cn zone file storage host
+   cn_host: kubekey.pek3b.qingstor.com
++  # Full ISO download source prefix (scheme + host + owner/repo), e.g.
++  #   https://github.com/kubesphere/kubekey            (official)
++  #   https://ghproxy.example.com/github.com/yourname/kubekey  (GitHub proxy)
++  # When set, it fully overrides the ISO download URL (cn_host/zone are ignored
++  # for ISO). When empty (default), ISO URLs fall back to the official source,
++  # honoring zone=cn via cn_host as before.
++  iso_host: ""
+   os: linux
+   arch: [ "amd64" ]
+   # offline artifact package for kk.
+diff --git a/builtin/core/roles/download/tasks/iso.yaml b/builtin/core/roles/download/tasks/iso.yaml
+index 87cadb7a..9c5e7154 100644
+--- a/builtin/core/roles/download/tasks/iso.yaml
++++ b/builtin/core/roles/download/tasks/iso.yaml
+@@ -13,7 +13,12 @@
+     - printf "%s/repository/%s-%s.iso" .binary_dir .item.iso .item.arch | fileExists | not
+   http_get_file:
+     url: >-
++      {{- $prefix := .download.iso_host | trimSuffix "/" -}}
++      {{- if $prefix | empty -}}
+       {{- .zone | eq "cn" | ternary (tpl "https://{{ .download.cn_host }}/" .) "https://" -}}
+       github.com/kubesphere/kubekey/releases/download/iso-latest/{{ .item.iso }}-{{ .item.arch }}.iso
++      {{- else -}}
++      {{ $prefix }}/releases/download/iso-latest/{{ .item.iso }}-{{ .item.arch }}.iso
++      {{- end }}
+     dest: "{{ .binary_dir }}/repository/{{ .item.iso }}-{{ .item.arch }}.iso"
+     timeout: "{{ .download.timeout }}"
+-- 
+2.43.0.windows.1
+
