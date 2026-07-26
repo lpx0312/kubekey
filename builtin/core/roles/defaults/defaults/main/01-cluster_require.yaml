@@ -12,6 +12,8 @@ cluster_require:
     - '"centos"'
     - kylin
     - '"kylin"'
+    - hce
+    - '"hce"'
     - rocky
     - '"rocky"'
   # Required network plugins
