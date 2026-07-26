@@ -7,6 +7,8 @@
       centos
       {{- else if .os.release.ID | unquote | eq "kylin" }}
       centos
+      {{- else if .os.release.ID | unquote | eq "hce" }}
+      centos
       {{- end -}}
 
 - name: Repository | Initialize Debian-based repository and install required system packages
