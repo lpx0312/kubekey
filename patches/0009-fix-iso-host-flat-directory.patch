@@ -1,0 +1,70 @@
+From d1319cd049ad1db139b32520fd9cb2e4dc9bd43e Mon Sep 17 00:00:00 2001
+From: lpx <lpx_0312@163.com>
+Date: Wed, 29 Jul 2026 08:58:41 +0800
+Subject: [PATCH] fix(iso): let iso_host point at a flat directory of ISOs
+
+Patch 7 (d01e0bf5) made iso_host configurable but still hardcoded the
+GitHub release path '/releases/download/iso-latest/' after it. That
+only worked when iso_host was a GitHub release mirror (scheme + host +
+owner/repo). Pointing iso_host at a plain HTTP directory where the
+ISOs sit directly (a very common self-hosted setup) produced 404s,
+because the URL gained a non-existent 'releases/download/iso-latest/'
+segment.
+
+Drop the hardcoded segment: when iso_host is set, the ISO filename is
+now appended directly after it (single '/'). This keeps the field a
+'full URL prefix' as documented and supports both layouts:
+  - Flat directory:   iso_host=https://mirrors.example.com/kubekey/iso/
+      -> .../iso/centos-8-rpms-amd64.iso
+  - Release mirror:   iso_host=https://ghproxy.example.com/.../iso-latest
+      -> .../iso-latest/centos-8-rpms-amd64.iso
+(append the release path yourself for the second case).
+
+Default behavior (iso_host empty) is unchanged: official source via
+zone=cn/cn_host as before. Verified the rendered URL for all four
+cases (flat dir, release mirror, official cn, official direct) with
+the real sprig FuncMap.
+---
+ .../roles/defaults/defaults/main/10-download.yaml    | 12 +++++++++---
+ builtin/core/roles/download/tasks/iso.yaml           |  2 +-
+ 2 files changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/builtin/core/roles/defaults/defaults/main/10-download.yaml b/builtin/core/roles/defaults/defaults/main/10-download.yaml
+index 23611ef8..e9a5ee2d 100644
+--- a/builtin/core/roles/defaults/defaults/main/10-download.yaml
++++ b/builtin/core/roles/defaults/defaults/main/10-download.yaml
+@@ -3,9 +3,15 @@ download:
+   timeout: 300s
+   # default cn zone file storage host
+   cn_host: kubekey.pek3b.qingstor.com
+-  # Full ISO download source prefix (scheme + host + owner/repo), e.g.
+-  #   https://github.com/kubesphere/kubekey            (official)
+-  #   https://ghproxy.example.com/github.com/yourname/kubekey  (GitHub proxy)
++  # Full ISO download URL prefix. The ISO filename is appended directly after
++  # this prefix (separated by a single '/'), so it must point at the directory
++  # (or release path) that already contains the <iso>-<arch>.iso files.
++  #   Flat directory (ISOs sit directly under it):
++  #     https://mirrors.example.com/kubekey/iso/
++  #     -> https://mirrors.example.com/kubekey/iso/centos-8-rpms-amd64.iso
++  #   GitHub release mirror (append the release path yourself):
++  #     https://ghproxy.example.com/github.com/yourname/kubekey/releases/download/iso-latest
++  #     -> https://ghproxy.example.com/.../iso-latest/centos-8-rpms-amd64.iso
+   # When set, it fully overrides the ISO download URL (cn_host/zone are ignored
+   # for ISO). When empty (default), ISO URLs fall back to the official source,
+   # honoring zone=cn via cn_host as before.
+diff --git a/builtin/core/roles/download/tasks/iso.yaml b/builtin/core/roles/download/tasks/iso.yaml
+index 9c5e7154..54378f24 100644
+--- a/builtin/core/roles/download/tasks/iso.yaml
++++ b/builtin/core/roles/download/tasks/iso.yaml
+@@ -18,7 +18,7 @@
+       {{- .zone | eq "cn" | ternary (tpl "https://{{ .download.cn_host }}/" .) "https://" -}}
+       github.com/kubesphere/kubekey/releases/download/iso-latest/{{ .item.iso }}-{{ .item.arch }}.iso
+       {{- else -}}
+-      {{ $prefix }}/releases/download/iso-latest/{{ .item.iso }}-{{ .item.arch }}.iso
++      {{ $prefix }}/{{ .item.iso }}-{{ .item.arch }}.iso
+       {{- end }}
+     dest: "{{ .binary_dir }}/repository/{{ .item.iso }}-{{ .item.arch }}.iso"
+     timeout: "{{ .download.timeout }}"
+-- 
+2.43.0.windows.1
+

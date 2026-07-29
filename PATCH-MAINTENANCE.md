@@ -51,6 +51,7 @@ sync-patch.sh 用 **范围 cherry-pick**（`patch/base..patch/port-fix`）一次
 | HCE 2.0（华为云欧拉）作为 worker 节点不被识别 | `builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml`, `builtin/core/roles/native/repository/tasks/install_package.yaml` | `patches/0006-fix-hce-2.0-os-support.patch` |
 | ISO 离线包下载地址硬编码（无法走代理/镜像） | `builtin/core/roles/defaults/defaults/main/10-download.yaml`, `builtin/core/roles/download/tasks/iso.yaml` | `patches/0007-fix-iso-download-host-configurable.patch` |
 | openEuler 20.03/22.03/24.03 LTS 作为 worker 节点不被识别 | `builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml`, `builtin/core/roles/native/repository/tasks/install_package.yaml`, `builtin/core/roles/native/repository/tasks/main.yaml` | `patches/0008-fix-openeuler-os-support.patch` |
+| `iso_host` 指向平铺目录时 404（补丁 7 硬编码 release 路径） | `builtin/core/roles/defaults/defaults/main/10-download.yaml`, `builtin/core/roles/download/tasks/iso.yaml` | `patches/0009-fix-iso-host-flat-directory.patch` |
 
 `patches/` 目录下的 `.patch` 文件是每个补丁的独立归档，用于离线场景（见[离线 patch 文件](#离线-patch-文件)）。
 
@@ -235,7 +236,7 @@ git tag -a v4.0.6-portfix -m "Release: official v4.0.6 + private patches"
 git push origin refs/tags/v4.0.6-portfix
 ```
 
-**冲突的核心判断标准**：每个补丁的"修复意图"必须保留。具体到当前八个补丁：
+**冲突的核心判断标准**：每个补丁的"修复意图"必须保留。具体到当前九个补丁：
 - 镜像端口修复：`normalizeImageName` 里必须是 `strings.ContainsAny(firstPart, ".:")`，不能是官方的 `govalidator.IsHost`
 - etcd 备份修复：`backup.sh` 的 `snapshot save` 行必须是 localhost 单点，不能是多端点列表
 - 证书续期修复：脚本已改名为 `k8s-certs-renew.sh`，不得出现 `{{- if ... <v1.20.0 }}` 死代码分支；`getCertValidDays` 必须用 `RESIDUAL TIME` 列解析；`k8s-certs-renew.service` 的 ExecStart 和 `tasks/main.yaml` 都引用 `k8s-certs-renew.sh`
@@ -243,6 +244,7 @@ git push origin refs/tags/v4.0.6-portfix
 - certs renew playbook 修复：`playbooks/certs_renew.yaml` 的 role 必须是 `certs/init`（复数）；`certs/renew/meta/main.yaml` 的三个 dependency 必须是 `certs/renew/xxx`（带 `certs/` 前缀）
 - HCE 2.0 支持：`01-cluster_require.yaml` 的 `supported_os_distributions` 必须同时含 `hce` 和 `'"hce"'`（带引号变体，因 Go 端解析 `/etc/os-release` 保留引号）；`install_package.yaml` 的 `current_host_type` 必须有 `ID == hce → centos` 分支（HCE 无 `ID_LIKE`，不能靠 `rhel fedora` 匹配）
 - ISO 下载前缀可配置：`10-download.yaml` 的 `download.iso_host` 默认值必须是空字符串 `""`（保持官方行为）；`iso.yaml` 的 URL 模板必须是「设了 iso_host 就用它（含 https:// 前缀，忽略 zone/cn_host），没设走官方逻辑」的 if/else 结构，不能写死字面量，也不能让 iso_host 与 cn_host 叠加
+- `iso_host` 平铺目录：`iso.yaml` 设了 iso_host 后，ISO 文件名**直接拼接**在 `iso_host`（去尾斜杠）后（中间补 `/`），**不能再硬编码追加** `/releases/download/iso-latest/`（那是补丁 7 的设计缺陷，补丁 9 已修正）。GitHub Release 镜像场景由用户自己在 `iso_host` 里写全 release 路径
 - openEuler 支持：`01-cluster_require.yaml` 的 `supported_os_distributions` 必须同时含 `openEuler` 和 `'"openEuler"'`（注意大写 E，带引号变体）；`install_package.yaml` 的 `current_host_type` 必须有 `ID == openEuler → centos` 分支（openEuler 无 `ID_LIKE`，不能靠 `rhel fedora` 匹配）；`repository/tasks/main.yaml` 必须有 `oe_sp` 特判（从 `VERSION` 的 `SP1/SP2/SP3/SP4` 提取小写后缀）和 system_string 的 openEuler 分支（`openeuler-<VERSION_ID><oe_sp>`），否则同一主版本的多个 SP 会坍缩成同一个 ISO 名
 
 ---
@@ -289,6 +291,7 @@ git am /path/to/patches/0005-*.patch
 git am /path/to/patches/0006-*.patch
 git am /path/to/patches/0007-*.patch
 git am /path/to/patches/0008-*.patch
+git am /path/to/patches/0009-*.patch
 # 若 git am 冲突, 改用 git apply --3way
 ```
 
@@ -304,6 +307,7 @@ git am /path/to/patches/0008-*.patch
 | `patches/0006-fix-hce-2.0-os-support.patch` | HCE 2.0（华为云欧拉）作为 worker 节点不被识别 |
 | `patches/0007-fix-iso-download-host-configurable.patch` | ISO 离线包下载地址硬编码（无法走代理/镜像） |
 | `patches/0008-fix-openeuler-os-support.patch` | openEuler 20.03/22.03/24.03 LTS 作为 worker 节点不被识别 |
+| `patches/0009-fix-iso-host-flat-directory.patch` | `iso_host` 指向平铺目录时 404（补丁 7 硬编码 release 路径） |
 
 ---
 
@@ -423,21 +427,28 @@ builtin/core/roles/defaults/defaults/main/10-download.yaml:
 builtin/core/roles/download/tasks/iso.yaml:
   URL 模板:
     改前: github.com/kubesphere/kubekey/releases/download/iso-latest/...    (硬编码字面量)
-    改后: if iso_host 非空:
+    改后(补丁7原始, 已被补丁9修正): if iso_host 非空:
             {{ iso_host(去尾斜杠) }}/releases/download/iso-latest/...   (完全接管, 含 https://, 忽略 zone/cn_host)
           else:
             官方原逻辑(zone=cn 时 qingstor 兜底)
+    补丁9 修正后: if iso_host 非空:
+            {{ iso_host(去尾斜杠) }}/{{ iso }}-{{ arch }}.iso   (ISO 文件名直接拼接, 支持平铺目录)
+          else:
+            官方原逻辑(不变)
 ```
 
 原因：ISO 依赖包（如 `hce-2.0-rpms-{amd64,arm64}.iso`）的下载 URL `https://github.com/kubesphere/kubekey/releases/download/iso-latest/...` **硬编码在 `iso.yaml` 里**，没有任何 config 字段可以配置。`download.iso` 只控制下载哪些 ISO（列表），`download.cn_host` 只在 `zone=cn` 时换一个固定加速域名（`kubekey.pek3b.qingstor.com`，整站反代），都换不成用户自建的 GitHub 专用代理（如 `ghproxy.xxx/github.com/yourname/kubekey`，只反代 github.com）。导致内网或被墙环境做离线打包（`kk artifact export`）时无法从自有源拉 ISO。
 
-新增 `download.iso_host` 字段，**语义是完整 URL 前缀（含 `https://` 和 owner/repo）**。设了就完全接管 ISO URL：
+新增 `download.iso_host` 字段，**语义是完整 URL 前缀**。设了就完全接管 ISO URL（补丁 9 修正后，ISO 文件名直接拼接在后，支持平铺目录）：
 ```yaml
 spec:
   download:
-    iso_host: https://ghproxy.example.com/github.com/yourname/kubekey
+    # 平铺目录 (ISO 直接在目录下, 最常见)
+    iso_host: https://mirrors.example.com/kubekey/iso/
+    # 或 GitHub Release 镜像 (自己补全 release 路径)
+    # iso_host: https://ghproxy.example.com/github.com/yourname/kubekey/releases/download/iso-latest
 ```
-拼出 `https://ghproxy.example.com/github.com/yourname/kubekey/releases/download/iso-latest/hce-2.0-rpms-amd64.iso`。
+拼出 `https://mirrors.example.com/kubekey/iso/hce-2.0-rpms-amd64.iso`（平铺）或 `https://ghproxy.example.com/.../iso-latest/hce-2.0-rpms-amd64.iso`（release 镜像）。
 
 **设计要点（为何用「完整 URL 前缀」而非「owner/repo 路径」）**：GitHub 专用代理（如 ghproxy）的路径模式是 `<代理域名>/github.com/<owner>/<repo>/...`，它不是整站反代（不会镜像 `dl.k8s.io` 等）。若像官方 `cn_host` 那样把代理域名当「整站前缀」叠加到 `iso_host` 前，会拼出 `https://<cn_host>/<iso_host>/...` 双重路径导致 404。因此 `iso_host` 必须是完整 URL，设了就**忽略 `zone`/`cn_host`**，避免叠加。
 
@@ -475,3 +486,34 @@ builtin/core/roles/native/repository/tasks/main.yaml:               (openEuler �
 修复方式参照 kylin 的 `sp_version` 特判：新增 `oe_sp` set_fact（用 `contains` 从 `VERSION` 提取 `SP1–SP4`，拼成小写后缀 `-sp1`..`-sp4`），并在 `system_string` 加 openEuler 分支。已用仓库实际的 sprig FuncMap + KK `unquote` 验证全部 11 个版本（bare 和 quoted 两种 os-release 形式）都正确渲染出 `openeuler-<ver>-spN`，精确匹配预构建 ISO 文件名。
 
 > ⚠️ 只影响 kk 二进制（3 个 yaml 都是 `//go:embed` 编译进二进制的 defaults/tasks）。重新编译带此补丁的 kk 后，新增 openEuler 节点即可正常 add-node。已部署的集群不受影响。ISO 依赖包（`openeuler-*-rpms-*.iso`）已由 `hack/gen-repository-iso/dockerfile.openeuler*` 构建并发布到 `iso-latest` Release。
+
+### 补丁 9：`iso_host` 指向平铺目录时 404
+
+```
+builtin/core/roles/defaults/defaults/main/10-download.yaml:
+  iso_host 注释更新: 说明两种布局 (平铺目录 / GitHub release 镜像)
+                     字段值/默认值不变 (iso_host: "")
+
+builtin/core/roles/download/tasks/iso.yaml:
+  URL 模板 (iso_host 非空分支):
+    改前(补丁7): {{ iso_host }}/releases/download/iso-latest/{{ iso }}-{{ arch }}.iso
+    改后(补丁9): {{ iso_host }}/{{ iso }}-{{ arch }}.iso
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                              去掉硬编码的 release 路径段
+```
+
+原因：补丁 7（`d01e0bf5`）让 `iso_host` 可配置，但实现时**仍硬编码追加了** GitHub Release 路径 `/releases/download/iso-latest/`。这只在 `iso_host` 是「GitHub Release 镜像」（`iso_host` = `scheme://host/owner/repo`）时工作正常。但最常见的自建源方式是**把 ISO 文件平铺放在一个 HTTP 目录下**，此时 URL 会多出一段不存在的 `releases/download/iso-latest/` → **404**。
+
+```
+用户配置: iso_host: http://mirrors.lpx.com/.../kubekey/iso/
+补丁7拼出: http://mirrors.lpx.com/.../kubekey/iso/releases/download/iso-latest/xxx.iso  ← 404 (多了一段)
+补丁9拼出: http://mirrors.lpx.com/.../kubekey/iso/xxx.iso                                ← 200 ✓
+```
+
+修复：去掉硬编码段，`iso_host` 设了之后 ISO 文件名**直接拼接**在它后面（`iso_host` 先 `trimSuffix "/"`，再补一个 `/`）。这真正实现了补丁 7 文档承诺的「完整 URL 前缀」语义，两种布局都支持：
+- 平铺目录：`iso_host: https://mirrors.example.com/kubekey/iso/`
+- GitHub Release 镜像：用户自己在 `iso_host` 里写全 `.../releases/download/iso-latest`
+
+默认行为（`iso_host` 为空）完全不变：走官方 `zone=cn`/`cn_host` 逻辑。已用 sprig FuncMap 验证四种场景（平铺目录 / GitHub 镜像 / 官方 cn / 官方直连）URL 拼接全部正确。
+
+> ⚠️ **对旧补丁 7 config 的迁移**：如果之前用补丁 7 的旧语义（`iso_host` 不含 release 路径、靠代码补全）配过 config，升级到补丁 9 后：GitHub 镜像场景需要在 `iso_host` 里**自己补全 release 路径**；平铺目录场景无需改动（这本来就是新补丁要支持的）。

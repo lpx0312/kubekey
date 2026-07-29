@@ -11,7 +11,7 @@
 
 ## 补丁解决了什么问题
 
-本仓库当前维护八个私有补丁：
+本仓库当前维护九个私有补丁：
 
 ### 补丁 1：支持带端口的镜像仓库地址
 
@@ -108,13 +108,17 @@ defaultClass: {{ .storage_class.local.default }}   # ❌ 读的是 local.default
 - `10-download.yaml`：`download` 段新增 `iso_host` 字段，**默认空**（保持官方行为）。
 - `iso.yaml`：URL 模板改为：设了 `iso_host` 就完全用它（含 `https://` 前缀，忽略 `zone`/`cn_host`）；没设则走官方原逻辑（`zone=cn` 时 qingstor 兜底）。
 
-**用法**：在 config 里填**完整的 ISO 源前缀**（含 `https://` 和 owner/repo）：
+**用法**：在 config 里填**完整的 ISO 源 URL 前缀**，ISO 文件名会直接拼在它后面（中间补一个 `/`）：
 ```yaml
 spec:
   download:
-    iso_host: https://ghproxy.example.com/github.com/yourname/kubekey
+    iso_host: https://mirrors.example.com/kubekey/iso/
 ```
-完整 URL 会拼成 `https://ghproxy.example.com/github.com/yourname/kubekey/releases/download/iso-latest/hce-2.0-rpms-amd64.iso`。
+拼出 `https://mirrors.example.com/kubekey/iso/centos-8-rpms-amd64.iso`。
+
+支持两种 ISO 存放布局（补丁 9 修正，见下）：
+- **平铺目录**（ISO 直接放在目录下，最常见）：`iso_host: https://mirrors.example.com/kubekey/iso/` → `.../iso/centos-8-rpms-amd64.iso`
+- **GitHub Release 镜像**（自己补全 release 路径）：`iso_host: https://ghproxy.example.com/github.com/yourname/kubekey/releases/download/iso-latest` → `.../iso-latest/centos-8-rpms-amd64.iso`
 
 **设计要点**：`iso_host` 是**完整 URL 前缀**（含协议），不是 owner/repo 路径。这样设了就完全接管 ISO URL，**不再与 `cn_host`/`zone=cn` 叠加**（否则会拼出 `https://kubekey.pek3b.qingstor.com/ghproxy.xxx/...` 双重路径 404）。不设则行为与官方完全一致，老 config 无需改动。
 
@@ -136,6 +140,18 @@ spec:
 **已验证**：用仓库实际的 sprig FuncMap + KK `unquote` 渲染，全部 11 个版本（bare 和 quoted 两种 os-release 形式）都正确产出匹配的 ISO 名。
 
 > ⚠️ 只影响 kk 二进制。重新编译带此补丁的 kk 后，新增 openEuler 节点即可正常 add-node；已部署的集群不受影响。ISO 依赖包（`openeuler-*-rpms-*.iso`）已构建并发布到 `iso-latest` Release（见 commit `89dbc235`）。
+
+### 补丁 9：让 `iso_host` 指向 ISO 平铺目录
+
+**补丁 7 的设计缺陷**：补丁 7 让 `iso_host` 可配置，但实现时**仍硬编码追加了** GitHub Release 路径 `/releases/download/iso-latest/`。这导致 `iso_host` 只在"GitHub Release 镜像"场景下可用（`iso_host` = `scheme://host/owner/repo`）。当把 `iso_host` 指向一个**普通 HTTP 目录**（ISO 文件直接平铺在目录下，最常见的自建源方式）时，URL 会多出一段不存在的 `releases/download/iso-latest/` 路径，导致 **404**。
+
+**修复方式**：去掉硬编码的 release 路径段。`iso_host` 设了之后，ISO 文件名**直接拼接**在它后面（中间补一个 `/`），真正实现补丁 7 文档承诺的"完整 URL 前缀"语义。支持两种布局：
+- 平铺目录：`iso_host: https://mirrors.example.com/kubekey/iso/` → `.../iso/centos-8-rpms-amd64.iso`
+- GitHub Release 镜像：用户自己在 `iso_host` 里写全 release 路径 `.../releases/download/iso-latest`
+
+**默认行为不变**（`iso_host` 为空时仍走官方 `zone=cn`/`cn_host` 逻辑）。已用 sprig FuncMap 验证四种场景（平铺目录 / GitHub 镜像 / 官方 cn / 官方直连）URL 拼接全部正确。
+
+> ⚠️ 如果之前用补丁 7 的旧语义（`iso_host` 不含 release 路径、靠代码补全）配过 config，升级到补丁 9 后需要在 `iso_host` 里**自己补全 release 路径**（GitHub 镜像场景），或改成平铺目录形式。详见 [PATCH-MAINTENANCE.md](PATCH-MAINTENANCE.md) 补丁 9。
 
 ## 获取补丁版二进制
 
