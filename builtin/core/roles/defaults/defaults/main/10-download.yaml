@@ -3,9 +3,15 @@ download:
   timeout: 300s
   # default cn zone file storage host
   cn_host: kubekey.pek3b.qingstor.com
-  # Full ISO download source prefix (scheme + host + owner/repo), e.g.
-  #   https://github.com/kubesphere/kubekey            (official)
-  #   https://ghproxy.example.com/github.com/yourname/kubekey  (GitHub proxy)
+  # Full ISO download URL prefix. The ISO filename is appended directly after
+  # this prefix (separated by a single '/'), so it must point at the directory
+  # (or release path) that already contains the <iso>-<arch>.iso files.
+  #   Flat directory (ISOs sit directly under it):
+  #     https://mirrors.example.com/kubekey/iso/
+  #     -> https://mirrors.example.com/kubekey/iso/centos-8-rpms-amd64.iso
+  #   GitHub release mirror (append the release path yourself):
+  #     https://ghproxy.example.com/github.com/yourname/kubekey/releases/download/iso-latest
+  #     -> https://ghproxy.example.com/.../iso-latest/centos-8-rpms-amd64.iso
   # When set, it fully overrides the ISO download URL (cn_host/zone are ignored
   # for ISO). When empty (default), ISO URLs fall back to the official source,
   # honoring zone=cn via cn_host as before.
