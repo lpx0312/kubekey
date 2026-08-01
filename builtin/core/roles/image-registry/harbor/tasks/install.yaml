@@ -52,7 +52,7 @@
 - name: Harbor | Configure HA and synchronize Harbor images
   when:
     - .image_registry.ha_vip | empty | not
-    - .groups.image_registry | len | lt 1
+    - .groups.image_registry | len | gt 1
   block:
     - name: Harbor | Add keepalived service to Harbor docker-compose
       command: |
