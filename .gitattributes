@@ -1,0 +1,23 @@
+# Enforce LF line endings for files that are embedded into the kk binary
+# (via //go:embed) or used as runtime templates/scripts. CRLF in these files
+# gets baked into the compiled binary and pollutes rendered configs on Linux
+# nodes (e.g. harbor.yml gaining trailing \r, breaking data_volume paths).
+#
+# This matters on Windows checkouts where core.autocrlf=true would otherwise
+# convert LF -> CRLF on checkout. Pin eol=lf so the working tree always has LF
+# regardless of the user's autocrlf setting.
+
+# Sources embedded by //go:embed (builtin/core/fs.go, etc.)
+builtin/**      text eol=lf
+pkg/**          text eol=lf
+
+# Shell scripts and systemd units shipped to nodes
+*.sh            text eol=lf
+*.service       text eol=lf
+
+# Config / template types that get rendered onto Linux nodes
+*.yaml          text eol=lf
+*.yml           text eol=lf
+*.toml          text eol=lf
+*.conf          text eol=lf
+*.json          text eol=lf
