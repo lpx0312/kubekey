@@ -161,15 +161,20 @@ tls: failed to verify certificate: x509: certificate is valid for
 dockerhub.kubekey.local, kk-master01, kk-master02, kk-master03, localhost, not kk-harbor02
 ```
 
-**根因**：`harbor.yml` 模板的 `hostname` 用了条件 `.groups.image_registry | len | lt 1`（"组内节点数 < 1"）。这个条件不仅**逻辑写反**，而且 `.groups.image_registry` 在 image-registry 角色渲染阶段并不可靠（实测会解析为空），导致 `hostname` 被渲染成节点自身主机名（如 `kk-harbor02`），而不是 registry 域名（`dockerhub.kubekey.local`）。于是 Harbor 把 token 服务地址通告成 `https://kk-harbor02/service/token`，而 `image_registry.crt` 的 SAN 里只有 registry 域名和 IP，**没有各节点主机名** → 客户端去 `kk-harbor02` 拿 token 时 TLS 证书校验失败。同样写反的还有 keepalived 的两处 `when` 条件（`lt 1`，应为 `gt 1`，keepalived 应只在多节点 HA 时启用）。
+**根因**（两个叠加 bug，都源于 `.groups.image_registry` 在 image-registry 角色渲染阶段不可靠——实测会解析为空）：
+
+1. `harbor.yml` 的 `hostname` 用了条件 `.groups.image_registry | len | lt 1`。该变量解析为空时条件误判为 true，导致 `hostname` 被渲染成节点自身主机名（如 `kk-harbor02`），而不是 registry 域名（`dockerhub.kubekey.local`）。于是 Harbor 把 token 服务地址通告成 `https://kk-harbor02/service/token`，而 `image_registry.crt` 的 SAN 里只有 registry 域名和 IP，**没有各节点主机名** → 客户端去 `kk-harbor02` 拿 token 时 TLS 证书校验失败。
+2. keepalived 的两处 `when` 也用了 `.groups.image_registry | len | lt 1`。这里它**碰巧**为 true（空组的 `0 lt 1`），所以 keepalived 之前是意外启用的；若改成直观的 `gt 1`，`0 gt 1` 反而为 false，**keepalived 会被跳过，VIP 起不来，harbor 健康检查（走 VIP）超时，集群部署卡死**。
 
 **修复方式**（3 个文件）：
 - `harbor.yml` 的 `hostname` 条件改为 `.image_registry.auth.registry | empty`：配了 registry 域名就用它（单节点/多节点统一正确），没配才回退 `inventory_hostname`。不再依赖不可靠的 `groups.image_registry`。
-- `image-registry/meta/main.yaml` 和 `harbor/tasks/install.yaml` 的 keepalived `when`：`len | lt 1` → `len | gt 1`（HA = 多节点才需 keepalived）。
+- `image-registry/meta/main.yaml` 和 `harbor/tasks/install.yaml` 的 keepalived `when`：改为**只判断 `.image_registry.ha_vip | empty | not`**（配了 ha_vip 就是 HA，就该启用 keepalived），彻底去掉对 `groups.image_registry` 的依赖。
 
-已用 sprig `len/empty/gt/lt` 语义验证 9 种场景（registry 空/非空、1/2/3 节点、group 解析为空）全部正确，并已在真实 HA 集群手动验证 push 链路打通。
+已在真实 2 节点 Harbor HA 集群端到端验证：keepalived 正常启动、VIP 飘起、push 镜像成功、token realm 为 `https://dockerhub.kubekey.local/service/token`，完整集群（kubeadm init + 3 master + 1 worker）`failed: 0` 部署成功。
 
 > ⚠️ 只影响 kk 二进制（三个 yaml 都是 `//go:embed` 编译进二进制的 role 模板）。重新编译带此补丁的 kk 后，**新装**的 HA 镜像仓库即正常。**已部署的旧集群**需手动把两台 Harbor 的 `harbor.yml` 里 `hostname` 改成 registry 域名并重新 `prepare` + 重启 Harbor（详见 [PATCH-MAINTENANCE.md](PATCH-MAINTENANCE.md) 补丁 10）。
+>
+> ⚠️ **编译注意**：在 Windows 上编译 kk 时，务必确保 `.gitattributes` 生效（本仓库已加，强制 `builtin/**` 等用 LF）。否则 `core.autocrlf=true` 会把模板文件转成 CRLF，go embed 把 `\r` 烤进二进制，渲染出的配置（如 harbor.yml 的 `data_volume`）末尾带 `\r`，导致路径错误（目录被建成 `data\r`）。
 
 ## 获取补丁版二进制
 
