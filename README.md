@@ -11,7 +11,7 @@
 
 ## 补丁解决了什么问题
 
-本仓库当前维护九个私有补丁：
+本仓库当前维护十个私有补丁：
 
 ### 补丁 1：支持带端口的镜像仓库地址
 
@@ -152,6 +152,24 @@ spec:
 **默认行为不变**（`iso_host` 为空时仍走官方 `zone=cn`/`cn_host` 逻辑）。已用 sprig FuncMap 验证四种场景（平铺目录 / GitHub 镜像 / 官方 cn / 官方直连）URL 拼接全部正确。
 
 > ⚠️ 如果之前用补丁 7 的旧语义（`iso_host` 不含 release 路径、靠代码补全）配过 config，升级到补丁 9 后需要在 `iso_host` 里**自己补全 release 路径**（GitHub 镜像场景），或改成平铺目录形式。详见 [PATCH-MAINTENANCE.md](PATCH-MAINTENANCE.md) 补丁 9。
+
+### 补丁 10：修复 Harbor 高可用（多 registry 节点）下 push 镜像 TLS 证书校验失败
+
+**现象**：当 `image_registry` 组配置了**多个节点**（Harbor HA 部署，配了 `ha_vip`）时，`kk create cluster` 推送镜像（`ImageRegistry | Push images package to image registry`）报错：
+```
+tls: failed to verify certificate: x509: certificate is valid for
+dockerhub.kubekey.local, kk-master01, kk-master02, kk-master03, localhost, not kk-harbor02
+```
+
+**根因**：`harbor.yml` 模板的 `hostname` 用了条件 `.groups.image_registry | len | lt 1`（"组内节点数 < 1"）。这个条件不仅**逻辑写反**，而且 `.groups.image_registry` 在 image-registry 角色渲染阶段并不可靠（实测会解析为空），导致 `hostname` 被渲染成节点自身主机名（如 `kk-harbor02`），而不是 registry 域名（`dockerhub.kubekey.local`）。于是 Harbor 把 token 服务地址通告成 `https://kk-harbor02/service/token`，而 `image_registry.crt` 的 SAN 里只有 registry 域名和 IP，**没有各节点主机名** → 客户端去 `kk-harbor02` 拿 token 时 TLS 证书校验失败。同样写反的还有 keepalived 的两处 `when` 条件（`lt 1`，应为 `gt 1`，keepalived 应只在多节点 HA 时启用）。
+
+**修复方式**（3 个文件）：
+- `harbor.yml` 的 `hostname` 条件改为 `.image_registry.auth.registry | empty`：配了 registry 域名就用它（单节点/多节点统一正确），没配才回退 `inventory_hostname`。不再依赖不可靠的 `groups.image_registry`。
+- `image-registry/meta/main.yaml` 和 `harbor/tasks/install.yaml` 的 keepalived `when`：`len | lt 1` → `len | gt 1`（HA = 多节点才需 keepalived）。
+
+已用 sprig `len/empty/gt/lt` 语义验证 9 种场景（registry 空/非空、1/2/3 节点、group 解析为空）全部正确，并已在真实 HA 集群手动验证 push 链路打通。
+
+> ⚠️ 只影响 kk 二进制（三个 yaml 都是 `//go:embed` 编译进二进制的 role 模板）。重新编译带此补丁的 kk 后，**新装**的 HA 镜像仓库即正常。**已部署的旧集群**需手动把两台 Harbor 的 `harbor.yml` 里 `hostname` 改成 registry 域名并重新 `prepare` + 重启 Harbor（详见 [PATCH-MAINTENANCE.md](PATCH-MAINTENANCE.md) 补丁 10）。
 
 ## 获取补丁版二进制
 

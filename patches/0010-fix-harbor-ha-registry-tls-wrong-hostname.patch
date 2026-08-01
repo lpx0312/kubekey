@@ -1,0 +1,83 @@
+From ed532d5b504e5ab1a7480807d67783bdf71b49a5 Mon Sep 17 00:00:00 2001
+From: lpx <lpx_0312@163.com>
+Date: Sat, 1 Aug 2026 23:26:10 +0800
+Subject: [PATCH] fix(harbor): HA registry TLS fails - wrong hostname and
+ inverted keepalived condition
+
+In Harbor HA deployments (multiple image_registry nodes), pushing images
+failed with:
+  tls: failed to verify certificate: x509: certificate is valid for
+  dockerhub.kubekey.local, ..., not kk-harbor02
+
+Root cause: three template conditions used '.groups.image_registry | len
+| lt 1' (true when the group has FEWER than 1 host), and that variable is
+not reliably resolved at the image-registry render stage (observed empty
+on a real HA cluster), so the conditions evaluated true.
+
+1) harbor.yml 'hostname': the 'len | lt 1' branch rendered the node's own
+   hostname (e.g. kk-harbor02) instead of the registry domain. Harbor then
+   advertised its token service as https://kk-harbor02/service/token, but
+   the image_registry cert SAN contains dockerhub.kubekey.local (and IPs),
+   not the per-node hostname -> TLS mismatch. Fixed by gating on the
+   'auth.registry' field instead: use it when set (single AND multi node),
+   fall back to inventory_hostname only when it is empty.
+
+2) keepalived dependency (meta/main.yaml) and the keepalived injection
+   block (harbor/tasks/install.yaml): 'len | lt 1' is inverted. keepalived
+   is needed for HA = multiple registry nodes, so the condition must be
+   'len | gt 1' together with ha_vip being set. With the old condition it
+   also wrongly enabled keepalived because the group resolved empty.
+
+Verified all scenarios (registry set/empty, 1/2/3 nodes, group missing)
+with the sprig len/empty/gt/lt semantics.
+---
+ builtin/core/roles/image-registry/harbor/tasks/install.yaml   | 2 +-
+ builtin/core/roles/image-registry/harbor/templates/harbor.yml | 2 +-
+ builtin/core/roles/image-registry/meta/main.yaml              | 4 ++--
+ 3 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/builtin/core/roles/image-registry/harbor/tasks/install.yaml b/builtin/core/roles/image-registry/harbor/tasks/install.yaml
+index 9f1398fe..9080eeb3 100644
+--- a/builtin/core/roles/image-registry/harbor/tasks/install.yaml
++++ b/builtin/core/roles/image-registry/harbor/tasks/install.yaml
+@@ -52,7 +52,7 @@
+ - name: Harbor | Configure HA and synchronize Harbor images
+   when:
+     - .image_registry.ha_vip | empty | not
+-    - .groups.image_registry | len | lt 1
++    - .groups.image_registry | len | gt 1
+   block:
+     - name: Harbor | Add keepalived service to Harbor docker-compose
+       command: |
+diff --git a/builtin/core/roles/image-registry/harbor/templates/harbor.yml b/builtin/core/roles/image-registry/harbor/templates/harbor.yml
+index 0c4dd204..af5aeeff 100644
+--- a/builtin/core/roles/image-registry/harbor/templates/harbor.yml
++++ b/builtin/core/roles/image-registry/harbor/templates/harbor.yml
+@@ -2,7 +2,7 @@
+ 
+ # The IP address or hostname to access admin UI and registry service.
+ # DO NOT use localhost or 127.0.0.1, because Harbor needs to be accessed by external clients.
+-hostname: {{if .groups.image_registry | len | lt 1}}{{ .inventory_hostname }}{{else}}{{ .image_registry.auth.registry | splitList "/" | first }}{{ end }}
++hostname: {{if .image_registry.auth.registry | empty}}{{ .inventory_hostname }}{{else}}{{ .image_registry.auth.registry | splitList "/" | first }}{{ end }}
+ 
+ # http related config
+ http:
+diff --git a/builtin/core/roles/image-registry/meta/main.yaml b/builtin/core/roles/image-registry/meta/main.yaml
+index 4782dfa1..c48ae8b9 100644
+--- a/builtin/core/roles/image-registry/meta/main.yaml
++++ b/builtin/core/roles/image-registry/meta/main.yaml
+@@ -3,9 +3,9 @@ dependencies:
+   - role: image-registry/docker-compose
+ 
+   - role: image-registry/keepalived
+-    when: 
++    when:
+       - .image_registry.ha_vip | empty | not
+-      - .groups.image_registry | len | lt 1
++      - .groups.image_registry | len | gt 1
+ 
+   - role: image-registry/harbor
+     when: .image_registry.type | eq "harbor"
+-- 
+2.43.0.windows.1
+

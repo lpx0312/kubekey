@@ -52,6 +52,7 @@ sync-patch.sh 用 **范围 cherry-pick**（`patch/base..patch/port-fix`）一次
 | ISO 离线包下载地址硬编码（无法走代理/镜像） | `builtin/core/roles/defaults/defaults/main/10-download.yaml`, `builtin/core/roles/download/tasks/iso.yaml` | `patches/0007-fix-iso-download-host-configurable.patch` |
 | openEuler 20.03/22.03/24.03 LTS 作为 worker 节点不被识别 | `builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml`, `builtin/core/roles/native/repository/tasks/install_package.yaml`, `builtin/core/roles/native/repository/tasks/main.yaml` | `patches/0008-fix-openeuler-os-support.patch` |
 | `iso_host` 指向平铺目录时 404（补丁 7 硬编码 release 路径） | `builtin/core/roles/defaults/defaults/main/10-download.yaml`, `builtin/core/roles/download/tasks/iso.yaml` | `patches/0009-fix-iso-host-flat-directory.patch` |
+| Harbor 高可用（多 registry 节点）push 镜像 TLS 校验失败 | `builtin/core/roles/image-registry/harbor/templates/harbor.yml`, `builtin/core/roles/image-registry/meta/main.yaml`, `builtin/core/roles/image-registry/harbor/tasks/install.yaml` | `patches/0010-fix-harbor-ha-registry-tls-wrong-hostname.patch` |
 
 `patches/` 目录下的 `.patch` 文件是每个补丁的独立归档，用于离线场景（见[离线 patch 文件](#离线-patch-文件)）。
 
@@ -236,7 +237,7 @@ git tag -a v4.0.6-portfix -m "Release: official v4.0.6 + private patches"
 git push origin refs/tags/v4.0.6-portfix
 ```
 
-**冲突的核心判断标准**：每个补丁的"修复意图"必须保留。具体到当前九个补丁：
+**冲突的核心判断标准**：每个补丁的"修复意图"必须保留。具体到当前十个补丁：
 - 镜像端口修复：`normalizeImageName` 里必须是 `strings.ContainsAny(firstPart, ".:")`，不能是官方的 `govalidator.IsHost`
 - etcd 备份修复：`backup.sh` 的 `snapshot save` 行必须是 localhost 单点，不能是多端点列表
 - 证书续期修复：脚本已改名为 `k8s-certs-renew.sh`，不得出现 `{{- if ... <v1.20.0 }}` 死代码分支；`getCertValidDays` 必须用 `RESIDUAL TIME` 列解析；`k8s-certs-renew.service` 的 ExecStart 和 `tasks/main.yaml` 都引用 `k8s-certs-renew.sh`
@@ -246,6 +247,7 @@ git push origin refs/tags/v4.0.6-portfix
 - ISO 下载前缀可配置：`10-download.yaml` 的 `download.iso_host` 默认值必须是空字符串 `""`（保持官方行为）；`iso.yaml` 的 URL 模板必须是「设了 iso_host 就用它（含 https:// 前缀，忽略 zone/cn_host），没设走官方逻辑」的 if/else 结构，不能写死字面量，也不能让 iso_host 与 cn_host 叠加
 - `iso_host` 平铺目录：`iso.yaml` 设了 iso_host 后，ISO 文件名**直接拼接**在 `iso_host`（去尾斜杠）后（中间补 `/`），**不能再硬编码追加** `/releases/download/iso-latest/`（那是补丁 7 的设计缺陷，补丁 9 已修正）。GitHub Release 镜像场景由用户自己在 `iso_host` 里写全 release 路径
 - openEuler 支持：`01-cluster_require.yaml` 的 `supported_os_distributions` 必须同时含 `openEuler` 和 `'"openEuler"'`（注意大写 E，带引号变体）；`install_package.yaml` 的 `current_host_type` 必须有 `ID == openEuler → centos` 分支（openEuler 无 `ID_LIKE`，不能靠 `rhel fedora` 匹配）；`repository/tasks/main.yaml` 必须有 `oe_sp` 特判（从 `VERSION` 的 `SP1/SP2/SP3/SP4` 提取小写后缀）和 system_string 的 openEuler 分支（`openeuler-<VERSION_ID><oe_sp>`），否则同一主版本的多个 SP 会坍缩成同一个 ISO 名
+- Harbor HA 修复：`harbor/templates/harbor.yml` 的 `hostname` 条件必须是 `.image_registry.auth.registry | empty`（用 registry 域名，**不能**用 `.groups.image_registry | len | lt 1`）；`image-registry/meta/main.yaml` 和 `harbor/tasks/install.yaml` 的 keepalived `when` 必须是 `len | gt 1`（**不能**是 `lt 1`，HA 即多节点）
 
 ---
 
@@ -292,6 +294,7 @@ git am /path/to/patches/0006-*.patch
 git am /path/to/patches/0007-*.patch
 git am /path/to/patches/0008-*.patch
 git am /path/to/patches/0009-*.patch
+git am /path/to/patches/0010-*.patch
 # 若 git am 冲突, 改用 git apply --3way
 ```
 
@@ -308,10 +311,11 @@ git am /path/to/patches/0009-*.patch
 | `patches/0007-fix-iso-download-host-configurable.patch` | ISO 离线包下载地址硬编码（无法走代理/镜像） |
 | `patches/0008-fix-openeuler-os-support.patch` | openEuler 20.03/22.03/24.03 LTS 作为 worker 节点不被识别 |
 | `patches/0009-fix-iso-host-flat-directory.patch` | `iso_host` 指向平铺目录时 404（补丁 7 硬编码 release 路径） |
+| `patches/0010-fix-harbor-ha-registry-tls-wrong-hostname.patch` | Harbor 高可用（多 registry 节点）push 镜像 TLS 校验失败 |
 
 ---
 
-## 五个补丁的修复要点（备查）
+## 十个补丁的修复要点（备查）
 
 ### 补丁 1：镜像仓库地址支持端口
 
@@ -517,3 +521,52 @@ builtin/core/roles/download/tasks/iso.yaml:
 默认行为（`iso_host` 为空）完全不变：走官方 `zone=cn`/`cn_host` 逻辑。已用 sprig FuncMap 验证四种场景（平铺目录 / GitHub 镜像 / 官方 cn / 官方直连）URL 拼接全部正确。
 
 > ⚠️ **对旧补丁 7 config 的迁移**：如果之前用补丁 7 的旧语义（`iso_host` 不含 release 路径、靠代码补全）配过 config，升级到补丁 9 后：GitHub 镜像场景需要在 `iso_host` 里**自己补全 release 路径**；平铺目录场景无需改动（这本来就是新补丁要支持的）。
+
+### 补丁 10：Harbor 高可用（多 registry 节点）push 镜像 TLS 校验失败
+
+```
+builtin/core/roles/image-registry/harbor/templates/harbor.yml:
+  hostname 条件:
+    改前: {{if .groups.image_registry | len | lt 1}} ... inventory_hostname
+                                       {{else}} ... registry {{end}}
+    改后: {{if .image_registry.auth.registry | empty}} ... inventory_hostname
+                                                    {{else}} ... registry {{end}}
+
+builtin/core/roles/image-registry/meta/main.yaml:
+  keepalived dependency 的 when:
+    改前: - .groups.image_registry | len | lt 1
+    改后: - .groups.image_registry | len | gt 1
+
+builtin/core/roles/image-registry/harbor/tasks/install.yaml:
+  "Configure HA and synchronize Harbor images" block 的 when:
+    改前: - .groups.image_registry | len | lt 1
+    改后: - .groups.image_registry | len | gt 1
+```
+
+原因：三处模板都用了条件 `.groups.image_registry | len | lt 1`（"组内节点数 < 1"），有两个问题叠加——
+
+1. **逻辑写反**：`lt 1`（节点数小于 1）几乎永远为 false（除非组完全为空）。而 keepalived / HA 这类逻辑应当只在**多节点**（`gt 1`）时启用，写 `lt 1` 是反的。
+
+2. **`groups.image_registry` 在 image-registry 角色渲染阶段不可靠**：实测在一个真实的 HA 集群（`image_registry` 组含 kk-harbor01/02 两台）上，这个变量被解析为空，于是 `len | lt 1` 误判成 true。最致命的后果在 `harbor.yml` 的 `hostname`：它本该渲染成 registry 域名（`dockerhub.kubekey.local`），却因条件为 true 走了 `inventory_hostname` 分支，渲染成节点主机名（如 `kk-harbor02`）。
+
+   Harbor 用 `hostname` 作为外部访问地址，于是把 token 服务通告成 `https://kk-harbor02/service/token`。客户端 push 时先访问 VIP（`dockerhub.kubekey.local` = `192.168.1.177`，由 keepalived 飘到某台 harbor），被 401 后按 `Www-Authenticate` 转去 `kk-harbor02` 取 token——而 `image_registry.crt` 的 SAN 只有 `dockerhub.kubekey.local` + master 节点名 + 各 IP，**没有各 harbor 节点主机名**，于是 TLS 校验失败：
+   ```
+   x509: certificate is valid for dockerhub.kubekey.local, ..., not kk-harbor02
+   ```
+
+修复：
+- `harbor.yml` 的 `hostname` 不再依赖 `groups.image_registry`，改为用 `auth.registry` 字段判断——该字段在所有渲染阶段都稳定可用（证书路径、auth.password 都正常用同一来源）。配了 registry 域名就用它（单节点、多节点统一正确），没配才回退 `inventory_hostname`。
+- keepalived 两处 `when` 改 `gt 1`：HA = 多节点才需要 keepalived，语义正确；且即便 `groups.image_registry` 仍异常解析为空（len=0），`0 gt 1` 为 false，也不会再被误启用（旧的 `lt 1` 在 group 为空时反而会误启用）。
+
+已用 sprig `len/empty/gt/lt` 语义验证 9 种场景（registry 空/非空、1/2/3 节点、group 解析为空）全部正确；并在真实 HA 集群上手动修复后验证 push 链路打通（token realm 变为 `https://dockerhub.kubekey.local/service/token`，证书 SAN 命中，manifest 请求正常返回 404 而非 TLS 错误）。
+
+> ⚠️ 只影响 kk 二进制（三个 yaml 都是 `//go:embed` 编译进二进制的 role 模板）。重新编译带此补丁的 kk，**新装**的 HA 镜像仓库即正常。
+>
+> **已部署的旧集群手动同步**（每台 Harbor 节点执行）：
+> ```bash
+> cd /opt/harbor/<version>/harbor
+> chmod u+w harbor.yml
+> sed -i 's/^hostname: kk-harbor0[12]$/hostname: dockerhub.kubekey.local/' harbor.yml
+> ./prepare && ./install.sh
+> ```
+> （把 `dockerhub.kubekey.local` 换成你实际的 `image_registry.auth.registry`。）
