@@ -52,7 +52,7 @@ sync-patch.sh 用 **范围 cherry-pick**（`patch/base..patch/port-fix`）一次
 | ISO 离线包下载地址硬编码（无法走代理/镜像） | `builtin/core/roles/defaults/defaults/main/10-download.yaml`, `builtin/core/roles/download/tasks/iso.yaml` | `patches/0007-fix-iso-download-host-configurable.patch` |
 | openEuler 20.03/22.03/24.03 LTS 作为 worker 节点不被识别 | `builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml`, `builtin/core/roles/native/repository/tasks/install_package.yaml`, `builtin/core/roles/native/repository/tasks/main.yaml` | `patches/0008-fix-openeuler-os-support.patch` |
 | `iso_host` 指向平铺目录时 404（补丁 7 硬编码 release 路径） | `builtin/core/roles/defaults/defaults/main/10-download.yaml`, `builtin/core/roles/download/tasks/iso.yaml` | `patches/0009-fix-iso-host-flat-directory.patch` |
-| Harbor 高可用（多 registry 节点）push 镜像 TLS 校验失败 | `builtin/core/roles/image-registry/harbor/templates/harbor.yml`, `builtin/core/roles/image-registry/meta/main.yaml`, `builtin/core/roles/image-registry/harbor/tasks/install.yaml` | `patches/0010-fix-harbor-ha-registry-tls-wrong-hostname.patch` |
+| Harbor 高可用（多 registry 节点）push 镜像 TLS 校验失败 + keepalived 不启动 | `builtin/core/roles/image-registry/harbor/templates/harbor.yml`, `builtin/core/roles/image-registry/meta/main.yaml`, `builtin/core/roles/image-registry/harbor/tasks/install.yaml`, `builtin/core/roles/uninstall/image-registry/meta/main.yaml` | `patches/0010-fix-harbor-ha-registry-tls-wrong-hostname.patch` |
 
 `patches/` 目录下的 `.patch` 文件是每个补丁的独立归档，用于离线场景（见[离线 patch 文件](#离线-patch-文件)）。
 
@@ -247,7 +247,7 @@ git push origin refs/tags/v4.0.6-portfix
 - ISO 下载前缀可配置：`10-download.yaml` 的 `download.iso_host` 默认值必须是空字符串 `""`（保持官方行为）；`iso.yaml` 的 URL 模板必须是「设了 iso_host 就用它（含 https:// 前缀，忽略 zone/cn_host），没设走官方逻辑」的 if/else 结构，不能写死字面量，也不能让 iso_host 与 cn_host 叠加
 - `iso_host` 平铺目录：`iso.yaml` 设了 iso_host 后，ISO 文件名**直接拼接**在 `iso_host`（去尾斜杠）后（中间补 `/`），**不能再硬编码追加** `/releases/download/iso-latest/`（那是补丁 7 的设计缺陷，补丁 9 已修正）。GitHub Release 镜像场景由用户自己在 `iso_host` 里写全 release 路径
 - openEuler 支持：`01-cluster_require.yaml` 的 `supported_os_distributions` 必须同时含 `openEuler` 和 `'"openEuler"'`（注意大写 E，带引号变体）；`install_package.yaml` 的 `current_host_type` 必须有 `ID == openEuler → centos` 分支（openEuler 无 `ID_LIKE`，不能靠 `rhel fedora` 匹配）；`repository/tasks/main.yaml` 必须有 `oe_sp` 特判（从 `VERSION` 的 `SP1/SP2/SP3/SP4` 提取小写后缀）和 system_string 的 openEuler 分支（`openeuler-<VERSION_ID><oe_sp>`），否则同一主版本的多个 SP 会坍缩成同一个 ISO 名
-- Harbor HA 修复：`harbor/templates/harbor.yml` 的 `hostname` 条件必须是 `.image_registry.auth.registry | empty`（用 registry 域名，**不能**用 `.groups.image_registry | len | lt 1`）；`image-registry/meta/main.yaml` 和 `harbor/tasks/install.yaml` 的 keepalived `when` 必须是**单一的** `.image_registry.ha_vip | empty | not`（**不能**用 `len | lt 1`，**也不能**用 `len | gt 1`——后者会让 keepalived 被跳过、VIP 起不来）
+- Harbor HA 修复：`harbor/templates/harbor.yml` 的 `hostname` 条件必须是 `.image_registry.auth.registry | empty`（用 registry 域名，**不能**用 `.groups.image_registry | len | lt 1`）；keepalived **三处** `when`（`image-registry/meta/main.yaml`、`harbor/tasks/install.yaml`、**`uninstall/image-registry/meta/main.yaml`**）都必须是**单一的** `.image_registry.ha_vip | empty | not`（**不能**用 `len | lt 1`，**也不能**用 `len | gt 1`——后者会让 keepalived 被跳过、VIP 起不来；uninstall 那处漏改会导致卸载时留下 VIP 残留）
 
 ---
 
@@ -543,24 +543,32 @@ builtin/core/roles/image-registry/harbor/tasks/install.yaml:
     改前: - .image_registry.ha_vip | empty | not
           - .groups.image_registry | len | lt 1
     改后: .image_registry.ha_vip | empty | not    (单一条件, 去掉 group 判断)
+
+builtin/core/roles/uninstall/image-registry/meta/main.yaml:           (卸载阶段, 与 install 对称)
+  keepalived uninstall dependency 的 when:
+    改前: - .image_registry.ha_vip | empty | not
+          - .groups.image_registry | len | lt 1
+    改后: .image_registry.ha_vip | empty | not    (单一条件, 去掉 group 判断)
 ```
 
-原因：三处模板都用了条件 `.groups.image_registry | len | lt 1`，而**这个变量在 image-registry 角色渲染阶段不可靠**——实测在一个真实的 HA 集群（`image_registry` 组含 kk-harbor01/02 两台）上，它被解析为空（len=0），导致两种截然不同的故障：
+原因：四处模板都用了条件 `.groups.image_registry | len | lt 1`，而**这个变量在 image-registry 角色渲染阶段不可靠**——实测在一个真实的 HA 集群（`image_registry` 组含 kk-harbor01/02 两台）上，它被解析为空（len=0），导致两种截然不同的故障：
 
 1. **harbor.yml 的 `hostname`**：本该渲染成 registry 域名（`dockerhub.kubekey.local`），却因 `0 lt 1` 误判为 true 走了 `inventory_hostname` 分支，渲染成节点主机名（如 `kk-harbor02`）。Harbor 把 `hostname` 当外部访问地址，于是把 token 服务通告成 `https://kk-harbor02/service/token`。客户端 push 时先访问 VIP（`dockerhub.kubekey.local` = `192.168.1.177`，由 keepalived 飘到某台 harbor），被 401 后按 `Www-Authenticate` 转去 `kk-harbor02` 取 token——而 `image_registry.crt` 的 SAN 只有 `dockerhub.kubekey.local` + master 节点名 + 各 IP，**没有各 harbor 节点主机名**，于是 TLS 校验失败：
    ```
    x509: certificate is valid for dockerhub.kubekey.local, ..., not kk-harbor02
    ```
 
-2. **keepalived 的 `when`**：这里 `0 lt 1` 为 true，所以 keepalived 之前是**意外启用**的（VIP 能飘起来）。⚠️ **千万不要简单改成 `gt 1`**——`0 gt 1` 为 false，会让 keepalived 被完全跳过，VIP 起不来，harbor 健康检查（走 VIP）超时，集群部署卡死在 harbor 安装之后。这正是补丁 0010 第一版（commit ed532d5b）犯的错，已在真实集群验证中发现并修正。
+2. **keepalived 的 `when`**（install 路径 2 处）：这里 `0 lt 1` 为 true，所以 keepalived 之前是**意外启用**的（VIP 能飘起来）。⚠️ **千万不要简单改成 `gt 1`**——`0 gt 1` 为 false，会让 keepalived 被完全跳过，VIP 起不来，harbor 健康检查（走 VIP）超时，集群部署卡死在 harbor 安装之后。这正是补丁 0010 第一版（commit ed532d5b）犯的错，已在真实集群验证中发现并修正。
+
+3. **keepalived 卸载的 `when`**（uninstall 路径 1 处）：与 install 完全对称的 bug。卸载 role（清理 VIP + `/opt/keepalived`）同样靠 `0 lt 1` 的意外 true 才执行。若哪天 `groups.image_registry` 解析正常（不为空），`lt 1` 立即变 false，**keepalived 卸载会被跳过**，留下 VIP 残留和 `/opt/keepalived` 文件。install 和 uninstall 必须用同一条件，否则会出现"装上了卸不掉"的错配。
 
 修复（统一原则：**不再依赖不可靠的 `groups.image_registry`**）：
 - `harbor.yml` 的 `hostname` 改用 `auth.registry` 字段判断——该字段在所有渲染阶段都稳定可用。配了 registry 域名就用它（单节点、多节点统一正确），没配才回退 `inventory_hostname`。
-- keepalived 两处 `when` 改为**只判断 `ha_vip` 是否设置**（`.image_registry.ha_vip | empty | not`）。keepalived 的本意就是"配了 ha_vip 就需要做 VIP 高可用"，这与节点数无关，用 `ha_vip` 判断语义最准确且稳定可用。
+- keepalived **三处** `when`（install 2 处 + uninstall 1 处）统一改为**只判断 `ha_vip` 是否设置**（`.image_registry.ha_vip | empty | not`）。keepalived 的本意就是"配了 ha_vip 就需要做 VIP 高可用"，这与节点数无关，用 `ha_vip` 判断语义最准确且稳定可用；同时保证 install/uninstall 对称。
 
 已在真实 2 节点 Harbor HA 集群端到端验证：keepalived 正常启动、VIP 飘起、push 镜像成功、完整集群（kubeadm init + 3 master + 1 worker）`failed: 0` 部署成功。
 
-> ⚠️ 只影响 kk 二进制（三个 yaml 都是 `//go:embed` 编译进二进制的 role 模板）。重新编译带此补丁的 kk，**新装**的 HA 镜像仓库即正常。
+> ⚠️ 只影响 kk 二进制（四个 yaml 都是 `//go:embed` 编译进二进制的 role 模板）。重新编译带此补丁的 kk，**新装**的 HA 镜像仓库即正常。
 >
 > ⚠️ **编译环境**：在 Windows 上编译 kk 时，`.gitattributes`（强制 `builtin/**` 等 LF）必须生效。否则 `core.autocrlf=true` 会让模板文件带 `\r`，go embed 把 `\r` 烤进二进制，渲染出的配置（如 harbor.yml 的 `data_volume: /var/lib/harbor/data\r`）末尾带 `\r`，导致目录被建成 `data\r`、harbor 启动报 `bind source path does not exist`。
 >

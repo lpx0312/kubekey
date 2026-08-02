@@ -1,6 +1,6 @@
-From 81e192ae587efeb12d51e5c4e8b4d15d06609386 Mon Sep 17 00:00:00 2001
+From 67edf4f6098b4c5488fa4432d629ae408a509627 Mon Sep 17 00:00:00 2001
 From: lpx <lpx_0312@163.com>
-Date: Sun, 2 Aug 2026 01:12:31 +0800
+Date: Sun, 2 Aug 2026 09:57:41 +0800
 Subject: [PATCH] fix(harbor): HA registry TLS fails - wrong hostname and
  keepalived never starts
 
@@ -9,30 +9,36 @@ pushing images failed with:
   tls: failed to verify certificate: x509: certificate is valid for
   dockerhub.kubekey.local, ..., not kk-harbor02
 
-Two compounding bugs, all caused by '.groups.image_registry' being
-unreliably resolved (observed empty) at the image-registry render stage:
+All caused by '.groups.image_registry' being unreliably resolved (observed
+empty) at the image-registry render stage. Four template sites used it:
 
-1) harbor.yml 'hostname' used 'groups.image_registry | len | lt 1' to pick
-   between the registry domain and the node hostname. With the group empty
-   it rendered the node hostname (e.g. kk-harbor02), so Harbor advertised
-   its token service as https://kk-harbor02/service/token - but the
-   image_registry cert SAN contains dockerhub.kubekey.local (+IPs), not the
-   per-node hostname -> TLS mismatch. Fixed by gating on 'auth.registry':
-   use it when set (single AND multi node), fall back to inventory_hostname
-   only when empty.
+1) harbor.yml 'hostname' (harbor/templates/harbor.yml): with the group empty
+   it rendered the node hostname (e.g. kk-harbor02) instead of the registry
+   domain, so Harbor advertised its token service as
+   https://kk-harbor02/service/token - but the image_registry cert SAN
+   contains dockerhub.kubekey.local (+IPs), not per-node hostnames ->
+   TLS mismatch. Fixed by gating on 'auth.registry': use it when set
+   (single AND multi node), fall back to inventory_hostname only when empty.
 
-2) keepalived (meta/main.yaml dependency + harbor/tasks/install.yaml block)
-   was gated on 'groups.image_registry | len | lt 1'. That happened to
-   evaluate true when the group resolved empty, so keepalived ran by
-   accident. The correct gate is whether HA is configured, i.e. ha_vip is
-   set - gate on '.image_registry.ha_vip | empty | not' alone and drop the
-   unreliable group check. Verified on a 2-node harbor HA cluster: VIP is
-   raised, push succeeds, full cluster (kubeadm init + workers) completes.
+2-3) keepalived install (image-registry/meta/main.yaml dependency +
+   harbor/tasks/install.yaml 'Configure HA' block): were gated on the
+   unreliable group, so keepalived was skipped -> no VIP -> harbor health
+   check (which hits the VIP) timed out -> cluster install stalled.
+
+4) keepalived uninstall (uninstall/image-registry/meta/main.yaml): symmetric
+   to install - same unreliable group, only cleaned up by accident.
+
+For 2-4, keepalived is needed exactly when HA is configured, i.e. when
+ha_vip is set. Gate all three on '.image_registry.ha_vip | empty | not'
+alone and drop the unreliable group check - this also keeps install and
+uninstall symmetric. Verified on a 2-node harbor HA cluster: keepalived
+starts, VIP is raised, push succeeds, full cluster completes with failed:0.
 ---
  builtin/core/roles/image-registry/harbor/tasks/install.yaml   | 4 +---
  builtin/core/roles/image-registry/harbor/templates/harbor.yml | 2 +-
  builtin/core/roles/image-registry/meta/main.yaml              | 4 +---
- 3 files changed, 3 insertions(+), 7 deletions(-)
+ builtin/core/roles/uninstall/image-registry/meta/main.yaml    | 4 +---
+ 4 files changed, 4 insertions(+), 10 deletions(-)
 
 diff --git a/builtin/core/roles/image-registry/harbor/tasks/install.yaml b/builtin/core/roles/image-registry/harbor/tasks/install.yaml
 index 9f1398fe..10baffcc 100644
@@ -77,6 +83,22 @@ index 4782dfa1..4312796f 100644
  
    - role: image-registry/harbor
      when: .image_registry.type | eq "harbor"
+diff --git a/builtin/core/roles/uninstall/image-registry/meta/main.yaml b/builtin/core/roles/uninstall/image-registry/meta/main.yaml
+index 409eaa0c..9f36e567 100644
+--- a/builtin/core/roles/uninstall/image-registry/meta/main.yaml
++++ b/builtin/core/roles/uninstall/image-registry/meta/main.yaml
+@@ -6,9 +6,7 @@ dependencies:
+     when: .image_registry.type | eq "docker-registry"
+ 
+   - role: uninstall/image-registry/keepalived
+-    when: 
+-     - .image_registry.ha_vip | empty | not
+-     - .groups.image_registry | len | lt 1
++    when: .image_registry.ha_vip | empty | not
+ 
+   - role: uninstall/image-registry/docker-compose
+     when: .delete.cri
+\ No newline at end of file
 -- 
 2.43.0.windows.1
 

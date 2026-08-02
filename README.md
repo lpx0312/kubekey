@@ -164,11 +164,11 @@ dockerhub.kubekey.local, kk-master01, kk-master02, kk-master03, localhost, not k
 **根因**（两个叠加 bug，都源于 `.groups.image_registry` 在 image-registry 角色渲染阶段不可靠——实测会解析为空）：
 
 1. `harbor.yml` 的 `hostname` 用了条件 `.groups.image_registry | len | lt 1`。该变量解析为空时条件误判为 true，导致 `hostname` 被渲染成节点自身主机名（如 `kk-harbor02`），而不是 registry 域名（`dockerhub.kubekey.local`）。于是 Harbor 把 token 服务地址通告成 `https://kk-harbor02/service/token`，而 `image_registry.crt` 的 SAN 里只有 registry 域名和 IP，**没有各节点主机名** → 客户端去 `kk-harbor02` 拿 token 时 TLS 证书校验失败。
-2. keepalived 的两处 `when` 也用了 `.groups.image_registry | len | lt 1`。这里它**碰巧**为 true（空组的 `0 lt 1`），所以 keepalived 之前是意外启用的；若改成直观的 `gt 1`，`0 gt 1` 反而为 false，**keepalived 会被跳过，VIP 起不来，harbor 健康检查（走 VIP）超时，集群部署卡死**。
+2. keepalived 的 `when`（install 路径 2 处 + uninstall 路径 1 处）也用了 `.groups.image_registry | len | lt 1`。这里它**碰巧**为 true（空组的 `0 lt 1`），所以 keepalived 之前是意外启用的；若改成直观的 `gt 1`，`0 gt 1` 反而为 false，**keepalived 会被跳过，VIP 起不来，harbor 健康检查（走 VIP）超时，集群部署卡死**。uninstall 路径那处是 install 的对称 bug——靠同样的意外才执行卸载，漏改会导致卸载时留下 VIP 残留和 `/opt/keepalived`。
 
-**修复方式**（3 个文件）：
+**修复方式**（4 个文件）：
 - `harbor.yml` 的 `hostname` 条件改为 `.image_registry.auth.registry | empty`：配了 registry 域名就用它（单节点/多节点统一正确），没配才回退 `inventory_hostname`。不再依赖不可靠的 `groups.image_registry`。
-- `image-registry/meta/main.yaml` 和 `harbor/tasks/install.yaml` 的 keepalived `when`：改为**只判断 `.image_registry.ha_vip | empty | not`**（配了 ha_vip 就是 HA，就该启用 keepalived），彻底去掉对 `groups.image_registry` 的依赖。
+- keepalived **三处** `when`（`image-registry/meta/main.yaml`、`harbor/tasks/install.yaml`、`uninstall/image-registry/meta/main.yaml`）统一改为**只判断 `.image_registry.ha_vip | empty | not`**（配了 ha_vip 就是 HA，就该启用/卸载 keepalived），彻底去掉对 `groups.image_registry` 的依赖，并保证 install/uninstall 对称。
 
 已在真实 2 节点 Harbor HA 集群端到端验证：keepalived 正常启动、VIP 飘起、push 镜像成功、token realm 为 `https://dockerhub.kubekey.local/service/token`，完整集群（kubeadm init + 3 master + 1 worker）`failed: 0` 部署成功。
 
