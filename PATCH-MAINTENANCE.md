@@ -53,6 +53,7 @@ sync-patch.sh 用 **范围 cherry-pick**（`patch/base..patch/port-fix`）一次
 | openEuler 20.03/22.03/24.03 LTS 作为 worker 节点不被识别 | `builtin/core/roles/defaults/defaults/main/01-cluster_require.yaml`, `builtin/core/roles/native/repository/tasks/install_package.yaml`, `builtin/core/roles/native/repository/tasks/main.yaml` | `patches/0008-fix-openeuler-os-support.patch` |
 | `iso_host` 指向平铺目录时 404（补丁 7 硬编码 release 路径） | `builtin/core/roles/defaults/defaults/main/10-download.yaml`, `builtin/core/roles/download/tasks/iso.yaml` | `patches/0009-fix-iso-host-flat-directory.patch` |
 | Harbor 高可用（多 registry 节点）push 镜像 TLS 校验失败 + keepalived 不启动 | `builtin/core/roles/image-registry/harbor/templates/harbor.yml`, `builtin/core/roles/image-registry/meta/main.yaml`, `builtin/core/roles/image-registry/harbor/tasks/install.yaml`, `builtin/core/roles/uninstall/image-registry/meta/main.yaml` | `patches/0010-fix-harbor-ha-registry-tls-wrong-hostname.patch` |
+| etcd 以静态 Pod（internal）方式部署时镜像永远拉不到（kubeadm imageRepository 丢路径 + 默认 repository 错） | `builtin/core/roles/kubernetes/init-kubernetes/templates/kubeadm/kubeadm-init.v1beta3`, `builtin/core/roles/kubernetes/init-kubernetes/templates/kubeadm/kubeadm-init.v1beta4`, `builtin/core/roles/defaults/defaults/main/04-etcd.yaml` | `patches/0011-fix-etcd-internal-static-pod-image-repository.patch` |
 
 `patches/` 目录下的 `.patch` 文件是每个补丁的独立归档，用于离线场景（见[离线 patch 文件](#离线-patch-文件)）。
 
@@ -248,6 +249,7 @@ git push origin refs/tags/v4.0.6-portfix
 - `iso_host` 平铺目录：`iso.yaml` 设了 iso_host 后，ISO 文件名**直接拼接**在 `iso_host`（去尾斜杠）后（中间补 `/`），**不能再硬编码追加** `/releases/download/iso-latest/`（那是补丁 7 的设计缺陷，补丁 9 已修正）。GitHub Release 镜像场景由用户自己在 `iso_host` 里写全 release 路径
 - openEuler 支持：`01-cluster_require.yaml` 的 `supported_os_distributions` 必须同时含 `openEuler` 和 `'"openEuler"'`（注意大写 E，带引号变体）；`install_package.yaml` 的 `current_host_type` 必须有 `ID == openEuler → centos` 分支（openEuler 无 `ID_LIKE`，不能靠 `rhel fedora` 匹配）；`repository/tasks/main.yaml` 必须有 `oe_sp` 特判（从 `VERSION` 的 `SP1/SP2/SP3/SP4` 提取小写后缀）和 system_string 的 openEuler 分支（`openeuler-<VERSION_ID><oe_sp>`），否则同一主版本的多个 SP 会坍缩成同一个 ISO 名
 - Harbor HA 修复：`harbor/templates/harbor.yml` 的 `hostname` 条件必须是 `.image_registry.auth.registry | empty`（用 registry 域名，**不能**用 `.groups.image_registry | len | lt 1`）；keepalived **三处** `when`（`image-registry/meta/main.yaml`、`harbor/tasks/install.yaml`、**`uninstall/image-registry/meta/main.yaml`**）都必须是**单一的** `.image_registry.ha_vip | empty | not`（**不能**用 `len | lt 1`，**也不能**用 `len | gt 1`——后者会让 keepalived 被跳过、VIP 起不来；uninstall 那处漏改会导致卸载时留下 VIP 残留）
+- etcd 静态 Pod 镜像修复：两个 kubeadm 模板（`kubeadm-init.v1beta3`/`v1beta4`）的 `etcd.local.imageRepository` 必须是 `{{ .etcd.image.registry }}/{{ dir .etcd.image.repository }}`（**不能**只写 `{{ .etcd.image.registry }}`——那会让 kubeadm 追加 `/etcd` 后丢掉项目前缀，镜像路径变成不存在的 `<registry>/etcd`）；`04-etcd.yaml` 的 `etcd.image.repository` 默认值必须是 `kubernetes/etcd`（**不能**是 `kubesphere/etcd`——上游镜像源是 `kubernetes/etcd`，Harbor 里镜像也在该项目下）
 
 ---
 
@@ -295,6 +297,7 @@ git am /path/to/patches/0007-*.patch
 git am /path/to/patches/0008-*.patch
 git am /path/to/patches/0009-*.patch
 git am /path/to/patches/0010-*.patch
+git am /path/to/patches/0011-*.patch
 # 若 git am 冲突, 改用 git apply --3way
 ```
 
@@ -312,10 +315,11 @@ git am /path/to/patches/0010-*.patch
 | `patches/0008-fix-openeuler-os-support.patch` | openEuler 20.03/22.03/24.03 LTS 作为 worker 节点不被识别 |
 | `patches/0009-fix-iso-host-flat-directory.patch` | `iso_host` 指向平铺目录时 404（补丁 7 硬编码 release 路径） |
 | `patches/0010-fix-harbor-ha-registry-tls-wrong-hostname.patch` | Harbor 高可用（多 registry 节点）push 镜像 TLS 校验失败 |
+| `patches/0011-fix-etcd-internal-static-pod-image-repository.patch` | etcd 以静态 Pod（internal）方式部署时镜像永远拉不到 |
 
 ---
 
-## 十个补丁的修复要点（备查）
+## 十一个补丁的修复要点（备查）
 
 ### 补丁 1：镜像仓库地址支持端口
 
@@ -580,3 +584,26 @@ builtin/core/roles/uninstall/image-registry/meta/main.yaml:           (卸载阶
 > ./prepare && ./install.sh
 > ```
 > （把 `dockerhub.kubekey.local` 换成你实际的 `image_registry.auth.registry`。）
+
+### 补丁 11：etcd 以静态 Pod（internal）方式部署时镜像永远拉不到
+
+```
+builtin/core/roles/kubernetes/init-kubernetes/templates/kubeadm/kubeadm-init.v1beta3:
+builtin/core/roles/kubernetes/init-kubernetes/templates/kubeadm/kubeadm-init.v1beta4:
+  etcd.local.imageRepository:
+    改前: {{ .etcd.image.registry }}                                  (只 registry 主机名, kubeadm 追加 /etcd 后路径变 <registry>/etcd, 不存在 → 400)
+    改后: {{ .etcd.image.registry }}/{{ dir .etcd.image.repository }} (dir 去末尾镜像名得项目前缀, kubeadm 追加 /etcd → <registry>/kubernetes/etcd)
+
+builtin/core/roles/defaults/defaults/main/04-etcd.yaml:
+  etcd.image.repository:
+    改前: kubesphere/etcd   (与上游镜像源 kubernetes/etcd 不符)
+    改后: kubernetes/etcd
+```
+
+原因：`etcd.deployment_type=internal` 时，kubekey 把 etcd 交给 kubeadm 以 stacked static Pod 部署。kubeadm 模板的 `etcd.local.imageRepository` 只渲染了 registry 主机名，**没引用 `etcd.image.repository` 字段**。kubeadm 的 `imageRepository` 语义是「镜像前缀（项目路径）」，会自动追加组件名 `/etcd`，于是镜像引用变成 `<registry>/etcd:<tag>`。私有 Harbor 里 etcd 镜像在项目 `kubernetes/etcd` 下，根路径 `etcd` 不存在 → registry 返回 400 Bad Request → etcd 永远拉不到 → `kubeadm init` 超时。**所以无论用户在 config 里把 `etcd.image.repository` 改成什么都不生效**——模板根本没读这个字段（dns 行、全局 imageRepository 都正确拼了 registry/repository，唯独 etcd 漏了）。此外默认值 `kubesphere/etcd` 与上游镜像源 `hub.kubesphere.com.cn/kubernetes/etcd`（Harbor 项目 `kubernetes/etcd`）不匹配，即使修好模板默认值也是错的。
+
+修复：用 sprig 的 `dir` 把 repository（如 `kubernetes/etcd`）去掉末尾镜像名得到项目前缀（`kubernetes`），拼出 `imageRepository: <registry>/kubernetes`，kubeadm 再追加 `/etcd` → `<registry>/kubernetes/etcd`（与 Harbor 实际路径一致，不重复）。默认 repository 改为 `kubernetes/etcd` 与上游源一致。
+
+已在真实 3 master + 1 worker 集群端到端验证：etcd static Pod 正确拉取 `dockerhub.kubekey.local/kubernetes/etcd:v3.5.24`，3 节点 etcd 全部 `started`，`failed: 0` 部署成功。
+
+> ⚠️ 只影响 kk 二进制（三个 yaml 都是 `//go:embed` 编译进二进制的 kubeadm/defaults 模板）。`external`（二进制 + systemd etcd，默认）模式不经过 kubeadm 的 `etcd.local`，不受影响；只 `internal`（静态 Pod etcd）模式受影响。重新编译带此补丁的 kk，**新装**的 internal 集群即正常。已部署的旧 internal 集群需用补丁版 kk `delete cluster --all` + `create cluster` 重建。

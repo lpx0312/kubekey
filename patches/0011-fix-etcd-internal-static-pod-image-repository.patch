@@ -1,0 +1,89 @@
+From 56d41afd77eb6640a142a60cb4b6389ed634c7f1 Mon Sep 17 00:00:00 2001
+From: lpx <lpx_0312@163.com>
+Date: Sun, 2 Aug 2026 13:50:55 +0800
+Subject: [PATCH] fix(etcd): internal/static-pod etcd image pull always fails -
+ wrong imageRepository
+
+When etcd.deployment_type=internal, kubekey delegates etcd to kubeadm as a
+stacked static Pod. The generated etcd static Pod can never pull its image,
+so etcd never starts and kubeadm init fails with "context deadline exceeded".
+
+Root cause: two compounding bugs in the kubeadm template's etcd.local block.
+
+1. imageRepository dropped the repository path. Both kubeadm-init.v1beta3
+   and v1beta4 rendered only {{ .etcd.image.registry }} (the registry host,
+   e.g. dockerhub.kubekey.local), ignoring .etcd.image.repository entirely.
+   kubeadm appends the component name "/etcd" to imageRepository, so the
+   final reference became dockerhub.kubekey.local/etcd:<tag>. In a private
+   Harbor registry etcd lives under a project (kubernetes/etcd), and the
+   root path "etcd" does not exist, so the registry returns 400 Bad Request.
+   No matter what the user sets etcd.image.repository to, it never took
+   effect because the template never referenced the field. Other components
+   (dns, the global imageRepository) correctly render registry/repository;
+   only etcd was broken.
+
+2. The default repository value kubesphere/etcd did not match the upstream
+   image source hub.kubesphere.com.cn/kubernetes/etcd (and thus the project
+   the image is actually pushed to in Harbor). Even fixing the template,
+   the default would still resolve to a non-existent kubesphere/etcd path.
+
+Fix:
+- kubeadm-init.v1beta3/.v1beta4: render
+    imageRepository: {{ .etcd.image.registry }}/{{ dir .etcd.image.repository }}
+  sprig's dir strips the trailing image name, yielding the project prefix
+  (kubernetes from kubernetes/etcd); kubeadm then appends /etcd to produce
+  the correct dockerhub.kubekey.local/kubernetes/etcd:<tag>.
+- 04-etcd.yaml: default repository kubesphere/etcd -> kubernetes/etcd to
+  match the upstream source and the Harbor project layout.
+---
+ builtin/core/roles/defaults/defaults/main/04-etcd.yaml        | 4 ++--
+ .../init-kubernetes/templates/kubeadm/kubeadm-init.v1beta3    | 2 +-
+ .../init-kubernetes/templates/kubeadm/kubeadm-init.v1beta4    | 2 +-
+ 3 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/builtin/core/roles/defaults/defaults/main/04-etcd.yaml b/builtin/core/roles/defaults/defaults/main/04-etcd.yaml
+index eb7dfc67..fcc12c0a 100644
+--- a/builtin/core/roles/defaults/defaults/main/04-etcd.yaml
++++ b/builtin/core/roles/defaults/defaults/main/04-etcd.yaml
+@@ -4,10 +4,10 @@ etcd:
+   # - external: Use an external etcd cluster.
+   # - internal: Deploy etcd as static Pods within the cluster.
+   deployment_type: external
+-  image: 
++  image:
+     registry: >-
+       {{ .image_registry.dockerio_registry }}
+-    repository: kubesphere/etcd
++    repository: kubernetes/etcd
+     tag: "{{ .etcd.etcd_version }}"
+   port: 2379
+   peer_port: 2380
+diff --git a/builtin/core/roles/kubernetes/init-kubernetes/templates/kubeadm/kubeadm-init.v1beta3 b/builtin/core/roles/kubernetes/init-kubernetes/templates/kubeadm/kubeadm-init.v1beta3
+index 4fc2e493..3356425c 100644
+--- a/builtin/core/roles/kubernetes/init-kubernetes/templates/kubeadm/kubeadm-init.v1beta3
++++ b/builtin/core/roles/kubernetes/init-kubernetes/templates/kubeadm/kubeadm-init.v1beta3
+@@ -6,7 +6,7 @@ kind: ClusterConfiguration
+ etcd:
+ {{- if .etcd.deployment_type | eq "internal" }}
+   local:
+-    imageRepository: {{ .etcd.image.registry }}
++    imageRepository: {{ .etcd.image.registry }}/{{ dir .etcd.image.repository }}
+     imageTag: {{ .etcd.image.tag }}
+     serverCertSANs:
+     {{- range .groups.etcd | default list }}
+diff --git a/builtin/core/roles/kubernetes/init-kubernetes/templates/kubeadm/kubeadm-init.v1beta4 b/builtin/core/roles/kubernetes/init-kubernetes/templates/kubeadm/kubeadm-init.v1beta4
+index 6f2cabe3..bbc2979d 100644
+--- a/builtin/core/roles/kubernetes/init-kubernetes/templates/kubeadm/kubeadm-init.v1beta4
++++ b/builtin/core/roles/kubernetes/init-kubernetes/templates/kubeadm/kubeadm-init.v1beta4
+@@ -7,7 +7,7 @@ kind: ClusterConfiguration
+ etcd:
+ {{- if .etcd.deployment_type | eq "internal" }}
+   local:
+-    imageRepository: {{ .etcd.image.registry }}
++    imageRepository: {{ .etcd.image.registry }}/{{ dir .etcd.image.repository }}
+     imageTag: {{ .etcd.image.tag }}
+     serverCertSANs:
+     {{- range .groups.etcd | default list }}
+-- 
+2.43.0.windows.1
+

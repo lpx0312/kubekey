@@ -11,7 +11,7 @@
 
 ## 补丁解决了什么问题
 
-本仓库当前维护十个私有补丁：
+本仓库当前维护十一个私有补丁：
 
 ### 补丁 1：支持带端口的镜像仓库地址
 
@@ -175,6 +175,32 @@ dockerhub.kubekey.local, kk-master01, kk-master02, kk-master03, localhost, not k
 > ⚠️ 只影响 kk 二进制（四个 yaml 都是 `//go:embed` 编译进二进制的 role 模板）。重新编译带此补丁的 kk 后，**新装**的 HA 镜像仓库即正常。**已部署的旧集群**需手动把两台 Harbor 的 `harbor.yml` 里 `hostname` 改成 registry 域名并重新 `prepare` + 重启 Harbor（详见 [PATCH-MAINTENANCE.md](PATCH-MAINTENANCE.md) 补丁 10）。
 >
 > ⚠️ **编译注意**：在 Windows 上编译 kk 时，务必确保 `.gitattributes` 生效（本仓库已加，强制 `builtin/**` 等用 LF）。否则 `core.autocrlf=true` 会把模板文件转成 CRLF，go embed 把 `\r` 烤进二进制，渲染出的配置（如 harbor.yml 的 `data_volume`）末尾带 `\r`，导致路径错误（目录被建成 `data\r`）。
+
+### 补丁 11：修复 etcd 以静态 Pod（internal）方式部署时镜像永远拉不到
+
+**现象**：当 `etcd.deployment_type: internal`（etcd 作为 stacked static Pod 部署，交给 kubeadm 拉起）时，生成的 etcd 静态 Pod 永远拉不到镜像，etcd 起不来，`kubeadm init` 卡在 `wait-control-plane` 4 分钟后报 `context deadline exceeded`：
+```
+[WARNING ImagePull]: failed to pull image dockerhub.kubekey.local/etcd:v3.5.24: ...
+unexpected status from HEAD request to https://dockerhub.kubekey.local/v2/etcd/manifests/v3.5.24: 400 Bad Request
+```
+
+**根因**（kubeadm 模板的两处叠加 bug）：
+
+1. `imageRepository` 丢了 repository 路径。两个 kubeadm 模板（`kubeadm-init.v1beta3` / `kubeadm-init.v1beta4`）的 `etcd.local` 块都只渲染了 `{{ .etcd.image.registry }}`（registry 主机名，如 `dockerhub.kubekey.local`），**完全没引用 `.etcd.image.repository`**。kubeadm 的 `imageRepository` 语义是「镜像前缀（项目路径）」，它会在后面自动追加组件名 `/etcd`，于是最终引用变成 `dockerhub.kubekey.local/etcd:<tag>`。私有 Harbor 里 etcd 镜像在项目 `kubernetes/etcd` 下，根路径 `etcd` 不存在 → registry 返回 400。所以**无论用户在 config 里把 `etcd.image.repository` 改成什么，都不生效**——模板根本没读这个字段。对比同文件其它组件是正确的：dns 行渲染 `registry/repository`，全局 imageRepository 本身含路径。
+2. 默认值 `kubesphere/etcd` 与上游镜像源 `hub.kubesphere.com.cn/kubernetes/etcd`（也就是镜像实际被推送到 Harbor 的项目 `kubernetes/etcd`）不匹配。即使修好模板，默认值仍会解析到不存在的 `kubesphere/etcd` 路径。
+
+**修复方式**（3 处）：
+- `kubeadm-init.v1beta3` / `kubeadm-init.v1beta4`：渲染
+  ```diff
+  - imageRepository: {{ .etcd.image.registry }}
+  + imageRepository: {{ .etcd.image.registry }}/{{ dir .etcd.image.repository }}
+  ```
+  sprig 的 `dir` 去掉末尾镜像名，得到项目前缀（`kubernetes/etcd` → `kubernetes`）；kubeadm 再追加 `/etcd` → 最终 `dockerhub.kubekey.local/kubernetes/etcd:<tag>`（与 Harbor 实际路径一致，不再重复）。
+- `04-etcd.yaml`：默认 `repository: kubesphere/etcd` → `kubernetes/etcd`，与上游镜像源及 Harbor 项目布局一致。
+
+已在真实 3 master + 1 worker 集群端到端验证：etcd static Pod 正确拉取 `dockerhub.kubekey.local/kubernetes/etcd:v3.5.24`，3 节点 etcd 全部 `started`，`failed: 0` 部署成功。
+
+> ⚠️ 只影响 kk 二进制（三个 yaml 都是 `//go:embed` 编译进二进制的 kubeadm/defaults 模板）。重新编译带此补丁的 kk，**新装**的 internal（静态 Pod etcd）集群即正常。`external`（二进制 + systemd etcd，默认）模式不经过 kubeadm 的 `etcd.local`，不受影响。已部署的旧集群若用 internal 模式，重新用补丁版 kk `delete cluster --all` + `create cluster` 即可。
 
 ## 获取补丁版二进制
 
