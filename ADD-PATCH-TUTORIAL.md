@@ -447,10 +447,21 @@ git checkout port-fix
 
 ## 附录：当前补丁清单
 
-| # | 补丁 | 文件 | patch 文件 |
-|---|------|------|-----------|
-| 1 | 镜像仓库地址支持端口 | `pkg/modules/image/image.go`, `image_test.go` | `0001-fix-image-...patch` |
-| 2 | etcd 定时备份脚本修复 | `builtin/core/roles/etcd/install/templates/backup.sh` | `0002-fix-etcd-...patch` |
-| 3 | k8s 证书自动续期修复 | `builtin/core/roles/kubernetes/certs/templates/renew_script.sh`, `files/k8s-certs-renew.service` | `0003-fix-certs-...patch` |
+> 完整、权威的清单见 [PATCH-MAINTENANCE.md](PATCH-MAINTENANCE.md) 的「已维护的 patch 列表」。本附录仅作速查。
 
-新增补丁时，序号从 4 开始递增。
+| # | 补丁 | patch 文件 |
+|---|------|-----------|
+| 1 | 镜像仓库地址支持端口 | `0001-fix-image-support-registry-addresses-with-a-port.patch` |
+| 2 | etcd 定时备份脚本修复 | `0002-fix-etcd-backup-script-unbound-var-and-multi-endpoint.patch` |
+| 3 | k8s 证书自动续期修复 + 脚本改名 | `0003-fix-certs-k8s-certs-renew-timer-3-bugs-and-rename.patch` |
+| 4 | NFS 默认存储类不生效 | `0004-fix-nfs-default-storageclass-wrong-variable.patch` |
+| 5 | `kk certs renew` 命令直接失败 | `0005-fix-certs-renew-playbook-references-nonexistent-role.patch` |
+| 6 | HCE 2.0 作为 worker 节点不被识别 | `0006-fix-hce-2.0-os-support.patch` |
+| 7 | ISO 离线包下载地址硬编码 | `0007-fix-iso-download-host-configurable.patch` |
+| 8 | openEuler 作为 worker 节点不被识别 | `0008-fix-openeuler-os-support.patch` |
+| 9 | `iso_host` 指向平铺目录时 404 | `0009-fix-iso-host-flat-directory.patch` |
+| 10 | Harbor 高可用 push 镜像 TLS 校验失败 + keepalived 不启动 | `0010-fix-harbor-ha-registry-tls-wrong-hostname.patch` |
+
+新增补丁时，序号从 **11** 开始递增。
+
+> 补丁 10 说明：修复 `.groups.image_registry` 在渲染阶段不可靠导致的两个问题——(1) harbor.yml 的 `hostname` 渲染成节点名致 TLS 失败；(2) keepalived（install 2 处 + uninstall 1 处，共 3 处）依赖该 group 致 VIP 起不来/卸载残留。统一改用 `ha_vip`/`auth.registry` 判断。已在真实 2 节点 HA 集群端到端验证。

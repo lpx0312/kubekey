@@ -172,7 +172,7 @@ dockerhub.kubekey.local, kk-master01, kk-master02, kk-master03, localhost, not k
 
 已在真实 2 节点 Harbor HA 集群端到端验证：keepalived 正常启动、VIP 飘起、push 镜像成功、token realm 为 `https://dockerhub.kubekey.local/service/token`，完整集群（kubeadm init + 3 master + 1 worker）`failed: 0` 部署成功。
 
-> ⚠️ 只影响 kk 二进制（三个 yaml 都是 `//go:embed` 编译进二进制的 role 模板）。重新编译带此补丁的 kk 后，**新装**的 HA 镜像仓库即正常。**已部署的旧集群**需手动把两台 Harbor 的 `harbor.yml` 里 `hostname` 改成 registry 域名并重新 `prepare` + 重启 Harbor（详见 [PATCH-MAINTENANCE.md](PATCH-MAINTENANCE.md) 补丁 10）。
+> ⚠️ 只影响 kk 二进制（四个 yaml 都是 `//go:embed` 编译进二进制的 role 模板）。重新编译带此补丁的 kk 后，**新装**的 HA 镜像仓库即正常。**已部署的旧集群**需手动把两台 Harbor 的 `harbor.yml` 里 `hostname` 改成 registry 域名并重新 `prepare` + 重启 Harbor（详见 [PATCH-MAINTENANCE.md](PATCH-MAINTENANCE.md) 补丁 10）。
 >
 > ⚠️ **编译注意**：在 Windows 上编译 kk 时，务必确保 `.gitattributes` 生效（本仓库已加，强制 `builtin/**` 等用 LF）。否则 `core.autocrlf=true` 会把模板文件转成 CRLF，go embed 把 `\r` 烤进二进制，渲染出的配置（如 harbor.yml 的 `data_volume`）末尾带 `\r`，导致路径错误（目录被建成 `data\r`）。
 
