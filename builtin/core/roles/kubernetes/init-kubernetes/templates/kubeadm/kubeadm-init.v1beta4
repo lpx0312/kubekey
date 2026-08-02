@@ -7,7 +7,7 @@ kind: ClusterConfiguration
 etcd:
 {{- if .etcd.deployment_type | eq "internal" }}
   local:
-    imageRepository: {{ .etcd.image.registry }}
+    imageRepository: {{ .etcd.image.registry }}/{{ dir .etcd.image.repository }}
     imageTag: {{ .etcd.image.tag }}
     serverCertSANs:
     {{- range .groups.etcd | default list }}
