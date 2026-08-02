@@ -50,9 +50,7 @@
   command: systemctl daemon-reload && systemctl start harbor.service && systemctl enable harbor.service
 
 - name: Harbor | Configure HA and synchronize Harbor images
-  when:
-    - .image_registry.ha_vip | empty | not
-    - .groups.image_registry | len | lt 1
+  when: .image_registry.ha_vip | empty | not
   block:
     - name: Harbor | Add keepalived service to Harbor docker-compose
       command: |
